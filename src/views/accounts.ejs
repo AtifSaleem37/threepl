@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Accounts - 3PL Portal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>3PL Accounts - Payment Verification</h1>
+  <div class="header-actions">
+    <%- include('partials/bell') %>
+    <form method="post" action="/accounts/logout"><button class="secondary">Log out (<%= user.username %>)</button></form>
+  </div>
+</header>
+<main>
+  <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
+  <% if (err) { %><div class="flash err"><%= err %></div><% } %>
+
+  <div class="card">
+    <h2>All Invoices</h2>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>Invoice #</th><th>Client Name</th><th>Business Name</th><th>Email</th><th>Store</th><th>Brand</th>
+          <th>ASIN(s)</th><th>Qty</th><th>Total</th><th>Date</th><th>Invoice</th><th>Payment Status</th><th>Action</th>
+        </tr>
+        <% orders.forEach(o => { %>
+        <tr>
+          <td><a href="/invoices/<%= o.invoice_no %>.pdf"><%= o.invoice_no %></a></td>
+          <td><%= o.name %></td>
+          <td><%= o.business_name %></td>
+          <td><%= o.email %></td>
+          <td><%= o.store_name || '-' %></td>
+          <td><%= o.brand_name || '-' %></td>
+          <td><%= o.asin %></td>
+          <td><%= o.quantity %></td>
+          <td>$<%= o.total.toFixed(2) %></td>
+          <td><%= o.created_at.slice(0, 10) %></td>
+          <td><a href="/invoices/<%= o.invoice_no %>.pdf">PDF</a></td>
+          <td><span class="badge <%= o.payment_status %>"><%= payLabels[o.payment_status] %></span></td>
+          <td>
+            <% if (o.payment_status === 'verification') { %>
+              <div class="inline-form">
+                <form method="post" action="/accounts/orders/<%= o.id %>/verify"><button type="submit">Verify payment</button></form>
+                <form method="post" action="/accounts/orders/<%= o.id %>/reject"><button type="submit" class="secondary">Not received</button></form>
+              </div>
+            <% } else { %>-<% } %>
+          </td>
+        </tr>
+        <% }) %>
+        <% if (orders.length === 0) { %><tr><td colspan="13">No invoices yet.</td></tr><% } %>
+      </table>
+    </div>
+    <p><small class="hint">Invoices awaiting verification are listed first. Verifying marks the invoice Paid and unlocks shipment fields for the client.</small></p>
+  </div>
+</main>
+</body>
+</html>

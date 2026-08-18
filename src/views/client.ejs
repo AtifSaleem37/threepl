@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Client - 3PL Portal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>3PL Client Portal<%= me.client_name ? ' - ' + me.client_name : '' %></h1>
+  <div class="header-actions">
+    <%- include('partials/bell') %>
+    <form method="post" action="/clients/logout"><button class="secondary">Log out</button></form>
+  </div>
+</header>
+<main>
+  <nav class="tabs">
+    <a href="/clients?tab=orders" class="<%= tab === 'orders' ? 'active' : '' %>">My Orders &amp; Invoices</a>
+    <a href="/clients?tab=new-order" class="<%= tab === 'new-order' ? 'active' : '' %>">New Prep Order</a>
+  </nav>
+
+  <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
+  <% if (err) { %><div class="flash err"><%= err %></div><% } %>
+
+  <% if (tab === 'new-order') { %>
+  <div class="card">
+    <h2>New Prep Order</h2>
+    <p><small class="hint">Receiving &amp; inspection, FNSKU labeling and cartonization apply to every product.
+      Select <strong>Poly bag</strong> or <strong>Bubble wrap</strong> per product where required (same rate) - it is charged for that product's units only.</small></p>
+    <form method="post" action="/clients/orders">
+      <div class="grid cols-3">
+        <div><label>Name *</label><input name="name" value="<%= me.client_name || '' %>" required></div>
+        <div><label>Business Name *</label><input name="business_name" value="<%= me.business_name || '' %>" required></div>
+        <div><label>Email *</label><input type="email" name="email" value="<%= me.email || '' %>" required></div>
+        <div><label>Brand Name *</label><input name="brand_name" required></div>
+        <div><label>Store Name</label><input name="store_name" value="<%= me.store_name || '' %>"></div>
+      </div>
+
+      <h3 class="products-heading">Products</h3>
+      <div id="products"></div>
+      <button type="button" class="secondary" onclick="addProduct()">+ Add product</button>
+      <br><br>
+      <button type="submit">Submit order &amp; generate invoice</button>
+    </form>
+  </div>
+
+  <template id="product-row">
+    <div class="product-row">
+      <input name="__asin" placeholder="ASIN (e.g. B0ABC12345)" required>
+      <input name="__qty" type="number" min="1" placeholder="Quantity" required>
+      <select name="__pb">
+        <option value="">No poly bag / bubble wrap</option>
+        <option value="polybag">Poly bag</option>
+        <option value="bubblewrap">Bubble wrap</option>
+      </select>
+      <button type="button" class="secondary remove" onclick="removeProduct(this)">&minus;</button>
+    </div>
+  </template>
+  <script>
+    let idx = 0;
+    function addProduct() {
+      const row = document.getElementById('product-row').content.cloneNode(true);
+      row.querySelector('[name="__asin"]').name = `items[${idx}][asin]`;
+      row.querySelector('[name="__qty"]').name = `items[${idx}][quantity]`;
+      row.querySelector('[name="__pb"]').name = `items[${idx}][polybag]`;
+      document.getElementById('products').appendChild(row);
+      idx++;
+    }
+    function removeProduct(btn) {
+      const rows = document.querySelectorAll('#products .product-row');
+      if (rows.length > 1) btn.closest('.product-row').remove();
+    }
+    addProduct();
+  </script>
+  <% } %>
+
+  <% if (tab === 'orders') { %>
+  <div class="card">
+    <h2>My Orders &amp; Invoices</h2>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>Invoice #</th><th>Brand</th><th>ASIN(s)</th><th>Prep</th><th>Qty</th><th>Total</th>
+          <th>Invoice Status</th><th>Shipment Status</th><th>Carrier</th><th>Tracking ID</th><th>FNSKU</th><th>Invoice</th>
+        </tr>
+        <% orders.forEach(o => { %>
+        <tr>
+          <td><%= o.invoice_no %></td>
+          <td><%= o.brand_name || '-' %></td>
+          <td><%= o.asin %></td>
+          <td><%= o.prep_requirement %></td>
+          <td><%= o.quantity %></td>
+          <td>$<%= o.total.toFixed(2) %></td>
+          <td>
+            <span class="badge <%= o.payment_status %>"><%= payLabels[o.payment_status] %></span>
+            <% if (o.payment_status === 'unpaid') { %>
+              <form method="post" action="/clients/orders/<%= o.id %>/payment-sent" style="margin-top:6px">
+                <button type="submit" class="small">Payment sent</button>
+              </form>
+            <% } %>
+          </td>
+          <% if (o.payment_status === 'paid' && ['received','prep','prep_done','sent_to_amazon'].includes(o.shipment_status)) { %>
+          <td>
+            <span class="badge <%= o.shipment_status %>"><%= shipLabels[o.shipment_status] %></span>
+            <% if (o.shipment_status === 'sent_to_amazon') { %>
+              <div style="margin-top:6px"><a href="/clients?shiplabel=<%= o.id %>">View labels</a></div>
+            <% } else if (o.shipment_status === 'prep_done' && o.missing_info === 0) { %>
+              <div style="margin-top:6px">
+                <% if (o.missing_slabels > 0) { %>
+                  <a href="/clients?shiplabel=<%= o.id %>">Upload shipping labels</a>
+                <% } else { %>
+                  <span class="badge received">Shipping labels sent</span>
+                  <a href="/clients?shiplabel=<%= o.id %>">Add more / view</a>
+                <% } %>
+              </div>
+            <% } else if (o.shipment_status === 'prep_done') { %>
+              <div><small class="hint">Awaiting shipment info from warehouse</small></div>
+            <% } %>
+          </td>
+          <td><%= o.carrier || '-' %></td>
+          <td><%= o.tracking_id || '-' %></td>
+          <% } else if (o.payment_status === 'paid' && o.shipment_status === 'shipped' && o.missing_labels === 0) { %>
+          <td><span class="badge shipped">Shipped</span></td>
+          <td><%= o.carrier || '-' %></td>
+          <td><%= o.tracking_id || '-' %></td>
+          <% } else if (o.payment_status === 'paid') { %>
+          <td colspan="3">
+            <form class="inline-form" method="post" action="/clients/orders/<%= o.id %>/shipment">
+              <select name="shipment_status">
+                <% shipmentStatuses.forEach(s => { %>
+                  <option value="<%= s %>" <%= o.shipment_status === s ? 'selected' : '' %>><%= s %></option>
+                <% }) %>
+              </select>
+              <input name="carrier" placeholder="Carrier" value="<%= o.carrier || '' %>">
+              <input name="tracking_id" placeholder="Tracking ID" value="<%= o.tracking_id || '' %>">
+              <button type="submit">Save</button>
+            </form>
+          </td>
+          <% } else { %>
+          <td><span class="badge status"><%= o.shipment_status %></span></td>
+          <td colspan="2"><small class="hint"><%= o.payment_status === 'verification' ? 'Unlocks once accounts verifies your payment' : 'Unlocks after payment is sent and verified' %></small></td>
+          <% } %>
+          <td>
+            <% if (o.shipment_status === 'shipped' || o.shipment_status === 'received') { %>
+              <a href="/clients?fnsku=<%= o.id %>">Labels</a>
+            <% } else { %>-<% } %>
+          </td>
+          <td><a href="/invoices/<%= o.invoice_no %>.pdf">PDF</a></td>
+        </tr>
+        <% }) %>
+        <% if (orders.length === 0) { %><tr><td colspan="12">No orders yet - use the New Prep Order tab.</td></tr><% } %>
+      </table>
+    </div>
+  </div>
+  <% } %>
+
+  <% if (fnskuOrder) { %>
+  <dialog id="fnskuModal">
+    <h3>FNSKU labels for <%= fnskuOrder.invoice_no %></h3>
+    <p><small class="hint">Upload one FNSKU label file per ASIN. Only PDF files are accepted.</small></p>
+    <form method="post" action="/clients/orders/<%= fnskuOrder.id %>/fnsku" enctype="multipart/form-data">
+      <table>
+        <tr><th>ASIN</th><th>Qty</th><th>Status</th><th>Label PDF</th></tr>
+        <% fnskuItems.forEach(it => { %>
+        <tr>
+          <td><%= it.asin %></td>
+          <td><%= it.quantity %></td>
+          <td>
+            <% if (it.fnsku_file) { %>
+              <a href="/fnsku/<%= it.id %>.pdf">Uploaded</a>
+            <% } else { %>
+              <span class="badge unpaid">Missing</span>
+            <% } %>
+          </td>
+          <td><input type="file" name="fnsku_<%= it.id %>" accept="application/pdf,.pdf"></td>
+        </tr>
+        <% }) %>
+      </table>
+      <br>
+      <div class="inline-form">
+        <button type="submit">Upload labels</button>
+        <a href="/clients" class="dialog-close"><button type="button" class="secondary">Close</button></a>
+      </div>
+    </form>
+  </dialog>
+  <script>document.getElementById('fnskuModal').showModal();</script>
+  <% } %>
+
+  <% if (shipLabelOrder) { %>
+  <dialog id="shipLabelModal">
+    <h3>Shipping labels for <%= shipLabelOrder.invoice_no %></h3>
+    <p><small class="hint">The warehouse finished prep. Upload one or more shipping labels per ASIN (hold Ctrl/Cmd to pick multiple files). Only PDF files are accepted.</small></p>
+    <form method="post" action="/clients/orders/<%= shipLabelOrder.id %>/shipping-labels" enctype="multipart/form-data">
+      <table>
+        <tr><th>ASIN</th><th>Qty</th><th>Shipment info</th><th>Uploaded labels</th><th>Add label PDF(s)</th></tr>
+        <% shipLabelItems.forEach(it => { %>
+        <tr>
+          <td><%= it.asin %></td>
+          <td><%= it.quantity %></td>
+          <td><%= it.ship_info || '-' %></td>
+          <td>
+            <% (labelsByItem[it.id] || []).forEach((l, i) => { %>
+              <div><a href="/shiplabel/<%= l.id %>.pdf">Label <%= i + 1 %></a></div>
+            <% }) %>
+            <% if (!(labelsByItem[it.id] || []).length) { %><span class="badge unpaid">Missing</span><% } %>
+          </td>
+          <td>
+            <% if (shipLabelOrder.shipment_status === 'prep_done') { %>
+              <input type="file" name="slabel_<%= it.id %>" accept="application/pdf,.pdf" multiple>
+            <% } else { %>-<% } %>
+          </td>
+        </tr>
+        <% }) %>
+      </table>
+      <br>
+      <div class="inline-form">
+        <% if (shipLabelOrder.shipment_status === 'prep_done') { %><button type="submit">Upload labels</button><% } %>
+        <a href="/clients" class="dialog-close"><button type="button" class="secondary">Close</button></a>
+      </div>
+    </form>
+  </dialog>
+  <script>document.getElementById('shipLabelModal').showModal();</script>
+  <% } %>
+</main>
+</body>
+</html>

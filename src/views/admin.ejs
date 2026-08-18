@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Admin - 3PL Portal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>3PL Admin Portal</h1>
+  <div class="header-actions">
+    <%- include('partials/bell') %>
+    <form method="post" action="/admin/logout"><button class="secondary">Log out (<%= user.username %>)</button></form>
+  </div>
+</header>
+<main>
+  <nav class="tabs">
+    <a href="/admin?tab=orders" class="<%= tab === 'orders' ? 'active' : '' %>">Orders</a>
+    <a href="/admin?tab=client-user" class="<%= tab === 'client-user' ? 'active' : '' %>">Create Client</a>
+    <a href="/admin?tab=staff" class="<%= tab === 'staff' ? 'active' : '' %>">Staff Users</a>
+    <a href="/admin?tab=clients" class="<%= tab === 'clients' ? 'active' : '' %>">Clients &amp; Rates</a>
+  </nav>
+
+  <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
+  <% if (err) { %><div class="flash err"><%= err %></div><% } %>
+
+  <% if (tab === 'orders') { %>
+  <div class="card">
+    <h2>Orders</h2>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>Invoice #</th><th>Client Name</th><th>Email</th><th>Store Name</th><th>Brand</th><th>ASIN(s)</th>
+          <th>Prep Requirement</th><th>Qty</th><th>Total</th><th>Shipment Status</th>
+          <th>Payment Status</th><th>Tracking ID</th><th>Carrier</th>
+        </tr>
+        <% orders.forEach(o => { %>
+        <tr>
+          <td><a href="/invoices/<%= o.invoice_no %>.pdf"><%= o.invoice_no %></a></td>
+          <td><%= o.name %></td>
+          <td><%= o.email %></td>
+          <td><%= o.store_name || '-' %></td>
+          <td><%= o.brand_name || '-' %></td>
+          <td><%= o.asin %></td>
+          <td><%= o.prep_requirement %></td>
+          <td><%= o.quantity %></td>
+          <td>$<%= o.total.toFixed(2) %></td>
+          <td><span class="badge <%= ['received','shipped','prep','prep_done','sent_to_amazon'].includes(o.shipment_status) ? o.shipment_status : 'status' %>"><%= shipLabels[o.shipment_status] || o.shipment_status %></span></td>
+          <td><span class="badge <%= o.payment_status %>"><%= payLabels[o.payment_status] %></span></td>
+          <td><%= o.tracking_id || '-' %></td>
+          <td><%= o.carrier || '-' %></td>
+        </tr>
+        <% }) %>
+        <% if (orders.length === 0) { %><tr><td colspan="13">No orders yet.</td></tr><% } %>
+      </table>
+    </div>
+  </div>
+  <% } %>
+
+  <% if (tab === 'client-user') { %>
+  <div class="card">
+    <h2>Create Client Account</h2>
+    <form method="post" action="/admin/clients">
+      <input type="hidden" name="role" value="client">
+      <div class="grid cols-2">
+        <div><label>Client Name *</label><input name="client_name" required></div>
+        <div><label>Business Name</label><input name="business_name"></div>
+        <div><label>Email</label><input type="email" name="email"></div>
+        <div><label>Store Name</label><input name="store_name"></div>
+        <div><label>Username *</label><input name="username" required autocomplete="off"></div>
+        <div><label>Password *</label><input name="password" required autocomplete="new-password"></div>
+      </div>
+      <br><button type="submit">Create client</button>
+    </form>
+  </div>
+  <% } %>
+
+  <% if (tab === 'staff') { %>
+  <div class="card">
+    <h2>Create Staff User</h2>
+    <p><small class="hint">Accounts users verify client payments at /accounts. Warehouse users receive shipments and download FNSKU labels at /warehouse. Only name, username and password are needed.</small></p>
+    <form method="post" action="/admin/clients">
+      <div class="grid cols-2">
+        <div><label>Role *</label>
+          <select name="role">
+            <option value="accounts">Accounts (payment verification)</option>
+            <option value="warehouse">Warehouse (receiving)</option>
+          </select>
+        </div>
+        <div><label>Name *</label><input name="client_name" required></div>
+        <div><label>Username *</label><input name="username" required autocomplete="off"></div>
+        <div><label>Password *</label><input name="password" required autocomplete="new-password"></div>
+      </div>
+      <br><button type="submit">Create staff user</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Existing Staff Users</h2>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Role</th><th>Name</th><th>Username</th><th>Created</th><th>Reset password</th></tr>
+        <% staffUsers.forEach(a => { %>
+        <tr>
+          <td><span class="badge status"><%= a.role %></span></td>
+          <td><%= a.client_name %></td>
+          <td><%= a.username %></td>
+          <td><%= a.created_at.slice(0, 10) %></td>
+          <td>
+            <form class="inline-form" method="post" action="/admin/clients/<%= a.id %>/password?tab=staff">
+              <input name="password" placeholder="New password" required>
+              <button type="submit">Set</button>
+            </form>
+          </td>
+        </tr>
+        <% }) %>
+        <% if (staffUsers.length === 0) { %><tr><td colspan="5">No staff users yet.</td></tr><% } %>
+      </table>
+    </div>
+  </div>
+  <% } %>
+
+  <% if (tab === 'clients') { %>
+  <div class="card">
+    <h2>Global Rates (defaults)</h2>
+    <form method="post" action="/admin/rates">
+      <div class="grid cols-5">
+        <div><label>Inbound Receiving ($/unit)</label>
+          <input name="inbound" type="number" step="0.01" min="0" value="<%= rates.inbound %>"></div>
+        <div><label>FNSKU Labeling ($/unit)</label>
+          <input name="fnsku" type="number" step="0.01" min="0" value="<%= rates.fnsku %>"></div>
+        <div><label>Polybagging ($/unit)</label>
+          <input name="polybag" type="number" step="0.01" min="0" value="<%= rates.polybag %>"></div>
+        <div><label>Cartonization ($/carton)</label>
+          <input name="carton" type="number" step="0.01" min="0" value="<%= rates.carton %>"></div>
+        <div><label>Discount (%)</label>
+          <input name="discount_pct" type="number" step="0.1" min="0" max="100" value="<%= rates.discount_pct %>"></div>
+      </div>
+      <br><button type="submit">Save global rates</button>
+      <p><small class="hint">Polybagging is only charged when selected in the prep requirement. Cartons = quantity &divide; 50 (rounded up).</small></p>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Clients &amp; Rate Overrides</h2>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Client</th><th>Business</th><th>Email</th><th>Store</th><th>Username</th>
+            <th>Rate overrides (blank = global)</th><th>Reset password</th></tr>
+        <% clients.forEach(c => { %>
+        <tr>
+          <td><%= c.client_name %></td>
+          <td><%= c.business_name || '-' %></td>
+          <td><%= c.email || '-' %></td>
+          <td><%= c.store_name || '-' %></td>
+          <td><%= c.username %></td>
+          <td>
+            <form class="inline-form" method="post" action="/admin/clients/<%= c.id %>/rates">
+              <input name="inbound" type="number" step="0.01" min="0" placeholder="Inbound" value="<%= c.o_inbound ?? '' %>" title="Inbound $/unit">
+              <input name="fnsku" type="number" step="0.01" min="0" placeholder="FNSKU" value="<%= c.o_fnsku ?? '' %>" title="FNSKU $/unit">
+              <input name="polybag" type="number" step="0.01" min="0" placeholder="Polybag" value="<%= c.o_polybag ?? '' %>" title="Polybag $/unit">
+              <input name="carton" type="number" step="0.01" min="0" placeholder="Carton" value="<%= c.o_carton ?? '' %>" title="Carton $/carton">
+              <input name="discount_pct" type="number" step="0.1" min="0" max="100" placeholder="Disc %" value="<%= c.o_discount ?? '' %>" title="Discount %">
+              <button type="submit">Save</button>
+            </form>
+          </td>
+          <td>
+            <form class="inline-form" method="post" action="/admin/clients/<%= c.id %>/password?tab=clients">
+              <input name="password" placeholder="New password" required>
+              <button type="submit">Set</button>
+            </form>
+          </td>
+        </tr>
+        <% }) %>
+        <% if (clients.length === 0) { %><tr><td colspan="7">No clients yet.</td></tr><% } %>
+      </table>
+    </div>
+  </div>
+  <% } %>
+</main>
+</body>
+</html>

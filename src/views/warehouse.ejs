@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Warehouse - 3PL Portal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <h1>3PL Warehouse - Inbound Shipments</h1>
+  <div class="header-actions">
+    <%- include('partials/bell') %>
+    <form method="post" action="/warehouse/logout"><button class="secondary">Log out (<%= user.username %>)</button></form>
+  </div>
+</header>
+<main>
+  <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
+  <% if (err) { %><div class="flash err"><%= err %></div><% } %>
+
+  <div class="card">
+    <h2>Shipped &amp; In-Prep Orders</h2>
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>Invoice #</th><th>Client</th><th>Business</th><th>Brand</th><th>Store</th>
+          <th>Products (ASIN / Qty / Prep / Labels / Ship info)</th><th>Total Qty</th><th>Cartons</th>
+          <th>Carrier</th><th>Tracking ID</th><th>Status</th><th>Action</th>
+        </tr>
+        <% orders.forEach(o => { %>
+        <tr>
+          <td><a href="/invoices/<%= o.invoice_no %>.pdf"><%= o.invoice_no %></a></td>
+          <td><%= o.name %></td>
+          <td><%= o.business_name %></td>
+          <td><%= o.brand_name || '-' %></td>
+          <td><%= o.store_name || '-' %></td>
+          <td>
+            <% (itemsByOrder[o.id] || []).forEach(it => { %>
+              <div class="wh-item">
+                <strong><%= it.asin %></strong> &times; <%= it.quantity %>
+                <%= it.polybag_type ? ' - ' + it.polybag_type.toLowerCase() : '' %>
+                <% if (it.fnsku_file) { %> - <a href="/fnsku/<%= it.id %>.pdf">FNSKU</a>
+                <% } else { %> - <span class="badge unpaid">FNSKU missing</span><% } %>
+                <% if (it.ship_info) { %> - <em>info: <%= it.ship_info %></em><% } %>
+                <% (labelsByItem[it.id] || []).forEach((l, i) => { %>
+                  - <a href="/shiplabel/<%= l.id %>.pdf">Shipping label <%= i + 1 %></a>
+                <% }) %>
+                <% if (!(labelsByItem[it.id] || []).length && o.shipment_status === 'prep_done' && it.ship_info) { %>
+                  - <span class="badge verification">awaiting shipping label</span>
+                <% } %>
+              </div>
+            <% }) %>
+            <% if (!(itemsByOrder[o.id] || []).length) { %><%= o.asin %><% } %>
+          </td>
+          <td><%= o.quantity %></td>
+          <td><%= o.cartons %></td>
+          <td><%= o.carrier || '-' %></td>
+          <td><%= o.tracking_id || '-' %></td>
+          <td><span class="badge <%= o.shipment_status %>"><%= shipLabels[o.shipment_status] || o.shipment_status %></span></td>
+          <td>
+            <% if (o.shipment_status === 'shipped') { %>
+              <form method="post" action="/warehouse/orders/<%= o.id %>/received"><button type="submit">Mark received</button></form>
+            <% } else if (o.shipment_status === 'received') { %>
+              <form method="post" action="/warehouse/orders/<%= o.id %>/prep"><button type="submit">Start prep</button></form>
+            <% } else if (o.shipment_status === 'prep') { %>
+              <form method="post" action="/warehouse/orders/<%= o.id %>/prep-done"><button type="submit">Mark prep done</button></form>
+            <% } else if (o.shipment_status === 'prep_done' && o.missing_info > 0) { %>
+              <form method="post" action="/warehouse/orders/<%= o.id %>/ship-info" class="ship-info-form">
+                <% (itemsByOrder[o.id] || []).forEach(it => { %>
+                  <% if (!it.ship_info) { %>
+                    <label><%= it.asin %></label>
+                    <input name="info_<%= it.id %>" placeholder="Shipment info for <%= it.asin %>" required>
+                  <% } %>
+                <% }) %>
+                <button type="submit">Save shipment info</button>
+              </form>
+            <% } else if (o.shipment_status === 'prep_done' && o.missing_slabels > 0) { %>
+              <small class="hint">Awaiting client shipping labels</small>
+            <% } else if (o.shipment_status === 'prep_done') { %>
+              <form method="post" action="/warehouse/orders/<%= o.id %>/sent-to-amazon">
+                <button type="submit">Mark sent to Amazon</button>
+              </form>
+            <% } else { %>
+              <span class="badge sent_to_amazon">Sent to Amazon</span>
+            <% } %>
+          </td>
+        </tr>
+        <% }) %>
+        <% if (orders.length === 0) { %><tr><td colspan="12">No shipped orders yet.</td></tr><% } %>
+      </table>
+    </div>
+    <p><small class="hint">Flow: Mark received &rarr; Start prep &rarr; Mark prep done &rarr; enter shipment info per ASIN &rarr; client uploads shipping labels &rarr; Mark sent to Amazon.</small></p>
+  </div>
+</main>
+</body>
+</html>

@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title><%= portal.label %> Login - 3PL Portal</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main>
+    <div class="card login-box">
+      <h2>3PL <%= portal.label %> Login</h2>
+      <% if (error) { %><div class="flash err"><%= error %></div><% } %>
+      <form method="post" action="<%= portal.path %>/login">
+        <label>Username</label>
+        <input name="username" required autofocus>
+        <label>Password</label>
+        <input type="password" name="password" required>
+        <br><br>
+        <button type="submit">Log in</button>
+      </form>
+    </div>
+  </main>
+</body>
+</html>

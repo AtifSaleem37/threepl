@@ -1,0 +1,31 @@
+<div class="bell-wrap">
+  <button type="button" class="bell" id="bellBtn" aria-label="Notifications">
+    &#128276;
+    <span class="bell-dot" id="bellDot" hidden></span>
+  </button>
+  <div class="notif-panel" id="notifPanel" hidden>
+    <h4>Notifications</h4>
+    <% if (notifs.length === 0) { %><div class="notif">No notifications yet.</div><% } %>
+    <% notifs.forEach(n => { %>
+      <div class="notif"><span class="notif-time"><%= n.created_at %></span><br><%= n.message %></div>
+    <% }) %>
+  </div>
+</div>
+<script>
+(function () {
+  const btn = document.getElementById('bellBtn');
+  const panel = document.getElementById('notifPanel');
+  const dot = document.getElementById('bellDot');
+  const maxId = <%= notifs.length ? notifs[0].id : 0 %>;
+  const key = 'notifSeen:' + location.pathname;
+  if (maxId > (parseInt(localStorage.getItem(key)) || 0)) dot.hidden = false;
+  btn.addEventListener('click', function (e) {
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) { localStorage.setItem(key, String(maxId)); dot.hidden = true; }
+    e.stopPropagation();
+  });
+  document.addEventListener('click', function (e) {
+    if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) panel.hidden = true;
+  });
+})();
+</script>
