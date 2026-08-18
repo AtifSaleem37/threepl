@@ -26,7 +26,7 @@ const fnskuUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype === 'application/pdf' && /\.pdf$/i.test(file.originalname);
-    cb(ok ? null : new Error('Only PDF files are accepted for FNSKU labels'), ok);
+    ok ? cb(null) : cb(new Error('Only PDF files are accepted for FNSKU labels'));
   }
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));

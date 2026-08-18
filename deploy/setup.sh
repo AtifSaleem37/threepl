@@ -79,8 +79,15 @@ if [ -n "$DOMAIN" ]; then
   echo "  Running certbot for $DOMAIN ..."
   certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --register-unsafely-without-email
 else
-  # No domain — serve on port 80 using the EC2 public IP
-  PUBLIC_IP=$(curl -sf http://169.254.169.254/latest/meta-data/public-ipv4 || echo "_")
+  # No domain — serve on port 80 using the EC2 public IP (IMDSv2)
+  IMDS_TOKEN=$(curl -sf -X PUT "http://169.254.169.254/latest/api/token" \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 60" 2>/dev/null || true)
+  if [ -n "$IMDS_TOKEN" ]; then
+    PUBLIC_IP=$(curl -sf -H "X-aws-ec2-metadata-token: $IMDS_TOKEN" \
+      http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "_")
+  else
+    PUBLIC_IP=$(curl -sf http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "_")
+  fi
   sed -i "s/server_name .*/server_name $PUBLIC_IP;/" /etc/nginx/sites-available/$SERVICE_NAME
 
   ufw allow OpenSSH
