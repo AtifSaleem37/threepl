@@ -82,8 +82,12 @@ Or run `sudo bash deploy/setup.sh`, which does all of the above in one pass.
 `deploy/setup.sh` is for the first install; use `deploy/redeploy.sh` for every update after:
 
 ```bash
-cd ~/threepl && git pull && sudo bash deploy/redeploy.sh
+cd ~/threepl && sudo bash deploy/redeploy.sh
 ```
+
+Don't `git pull` first — the script fetches and fast-forwards itself, and stashes any
+local edits on the box before merging. A manual `git pull` just aborts the deploy if
+someone has hand-patched a file in place.
 
 It snapshots `data/` to `~/backups/` (checkpointing the WAL first), fast-forwards to
 `origin/<branch>`, runs `npm ci --omit=dev` **only if the lockfile moved**, restarts the

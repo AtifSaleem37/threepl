@@ -14,7 +14,13 @@
   <% if (err) { %><div class="flash err"><%= err %></div><% } %>
 
   <div class="card">
-    <h2>Shipped &amp; In-Prep Orders</h2>
+    <div class="card-head">
+      <h2>Shipped &amp; In-Prep Orders</h2>
+      <%- include('partials/search', { searchAction: '/warehouse' }) %>
+    </div>
+    <% if (q) { %>
+      <p class="search-note"><strong><%= orders.length %></strong> result<%= orders.length === 1 ? '' : 's' %> for &ldquo;<%= q %>&rdquo;</p>
+    <% } %>
     <div class="table-wrap">
       <table>
         <tr>
@@ -81,7 +87,7 @@
           </td>
         </tr>
         <% }) %>
-        <% if (orders.length === 0) { %><tr><td colspan="12">No shipped orders yet.</td></tr><% } %>
+        <% if (orders.length === 0) { %><tr><td colspan="12"><%= q ? 'No shipped orders match that client or brand name.' : 'No shipped orders yet.' %></td></tr><% } %>
       </table>
     </div>
     <p><small class="hint">Flow: Mark received &rarr; Start prep &rarr; Mark prep done &rarr; enter shipment info per ASIN &rarr; client uploads shipping labels &rarr; Mark sent to Amazon.</small></p>

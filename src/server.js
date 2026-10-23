@@ -49,6 +49,21 @@ const missingSlabelsSql = `
   (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id
      AND NOT EXISTS (SELECT 1 FROM shipping_labels l WHERE l.item_id = i.id))`;
 
+// Free-text search over client name + brand name, as an appendable AND clause.
+// Always parameterised; % and _ in the term are escaped so they match literally.
+// `withAccount` adds the joined users.client_name (admin and accounts only).
+function searchFilter(q, withAccount = false) {
+  const term = (q || '').trim();
+  if (!term) return { clause: '', params: [] };
+  const like = '%' + term.replace(/[\\%_]/g, c => '\\' + c) + '%';
+  const cols = ['o.name', 'o.brand_name'];
+  if (withAccount) cols.push('u.client_name');
+  return {
+    clause: ` AND (${cols.map(c => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+    params: cols.map(() => like)
+  };
+}
+
 // ---- notifications (keep only the last 5 per audience) ----
 function notify(role, message, clientId = null) {
   db.prepare('INSERT INTO notifications (role, client_id, message) VALUES (?,?,?)').run(role, clientId, message);
@@ -120,10 +135,13 @@ app.get('/admin', (req, res, next) => {
   if (!req.session.admin) return renderLogin(res, 'admin');
   next();
 }, (req, res) => {
+  const q = (req.query.q || '').trim();
+  const f = searchFilter(q, true);
   const orders = db.prepare(`
     SELECT o.*, u.client_name AS account_name
     FROM orders o JOIN users u ON u.id = o.client_id
-    ORDER BY o.id DESC`).all();
+    WHERE 1=1${f.clause}
+    ORDER BY o.id DESC`).all(...f.params);
   const clients = db.prepare(`
     SELECT u.*, r.inbound AS o_inbound, r.fnsku AS o_fnsku, r.polybag AS o_polybag,
            r.carton AS o_carton, r.discount_pct AS o_discount
@@ -133,7 +151,7 @@ app.get('/admin', (req, res, next) => {
   const TABS = ['orders', 'client-user', 'staff', 'clients'];
   res.render('admin', {
     user: req.session.admin,
-    orders, clients, staffUsers,
+    orders, clients, staffUsers, q,
     rates: getGlobalRates(),
     payLabels: PAY_LABELS,
     shipLabels: SHIP_LABELS,
@@ -206,13 +224,16 @@ app.get('/warehouse', (req, res, next) => {
   if (!req.session.warehouse) return renderLogin(res, 'warehouse');
   next();
 }, (req, res) => {
+  const q = (req.query.q || '').trim();
+  const f = searchFilter(q);
   const orders = db.prepare(`
     SELECT o.*,
       (SELECT COUNT(*) FROM order_items i WHERE i.order_id=o.id AND i.ship_info IS NULL) AS missing_info,
       ${missingSlabelsSql} AS missing_slabels
     FROM orders o
-    WHERE o.shipment_status IN ${WH_STATUSES}
-    ORDER BY CASE o.shipment_status WHEN 'shipped' THEN 0 WHEN 'received' THEN 1 WHEN 'prep' THEN 2 WHEN 'prep_done' THEN 3 ELSE 4 END, o.id DESC`).all();
+    WHERE o.shipment_status IN ${WH_STATUSES}${f.clause}
+    ORDER BY CASE o.shipment_status WHEN 'shipped' THEN 0 WHEN 'received' THEN 1 WHEN 'prep' THEN 2 WHEN 'prep_done' THEN 3 ELSE 4 END, o.id DESC`)
+    .all(...f.params);
   const itemsByOrder = {}, labelsByItem = {};
   for (const it of db.prepare(`
     SELECT i.* FROM order_items i JOIN orders o ON o.id = i.order_id
@@ -226,7 +247,7 @@ app.get('/warehouse', (req, res, next) => {
     (labelsByItem[l.item_id] = labelsByItem[l.item_id] || []).push(l);
   }
   res.render('warehouse', {
-    user: req.session.warehouse, orders, itemsByOrder, labelsByItem,
+    user: req.session.warehouse, orders, itemsByOrder, labelsByItem, q,
     payLabels: PAY_LABELS,
     shipLabels: SHIP_LABELS,
     notifs: getNotifs('warehouse'),
@@ -294,12 +315,16 @@ app.get('/accounts', (req, res, next) => {
   if (!req.session.accounts) return renderLogin(res, 'accounts');
   next();
 }, (req, res) => {
+  const q = (req.query.q || '').trim();
+  const f = searchFilter(q, true);
   const orders = db.prepare(`
     SELECT o.*, u.client_name AS account_name
     FROM orders o JOIN users u ON u.id = o.client_id
-    ORDER BY CASE o.payment_status WHEN 'verification' THEN 0 WHEN 'unpaid' THEN 1 ELSE 2 END, o.id DESC`).all();
+    WHERE 1=1${f.clause}
+    ORDER BY CASE o.payment_status WHEN 'verification' THEN 0 WHEN 'unpaid' THEN 1 ELSE 2 END, o.id DESC`)
+    .all(...f.params);
   res.render('accounts', {
-    user: req.session.accounts, orders,
+    user: req.session.accounts, orders, q,
     payLabels: PAY_LABELS,
     notifs: getNotifs('accounts'),
     tab: req.query.tab === 'notifications' ? 'notifications' : 'invoices',
@@ -333,12 +358,14 @@ app.get('/clients', (req, res, next) => {
   next();
 }, (req, res) => {
   const me = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.client.id);
+  const q = (req.query.q || '').trim();
+  const f = searchFilter(q);
   const orders = db.prepare(`
     SELECT o.*,
       (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.fnsku_file IS NULL) AS missing_labels,
       (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.ship_info IS NULL) AS missing_info,
       ${missingSlabelsSql} AS missing_slabels
-    FROM orders o WHERE o.client_id=? ORDER BY o.id DESC`).all(me.id);
+    FROM orders o WHERE o.client_id=?${f.clause} ORDER BY o.id DESC`).all(me.id, ...f.params);
   // FNSKU modal: ?fnsku=<orderId> / shipping-label modal: ?shiplabel=<orderId>
   let fnskuOrder = null, fnskuItems = [], shipLabelOrder = null, shipLabelItems = [];
   if (req.query.fnsku) {
@@ -354,7 +381,7 @@ app.get('/clients', (req, res, next) => {
     labelsByItem[it.id] = db.prepare('SELECT * FROM shipping_labels WHERE item_id=? ORDER BY id').all(it.id);
   }
   res.render('client', {
-    user: req.session.client, me, orders,
+    user: req.session.client, me, orders, q,
     shipmentStatuses: CLIENT_SHIP_STATUSES,
     payLabels: PAY_LABELS,
     shipLabels: SHIP_LABELS,

@@ -1,0 +1,16 @@
+<%#
+  Search box for a portal's order table.
+  Locals: searchAction (base path), q, optional searchTab (preserved across searches).
+-%>
+<form class="search" method="get" action="<%= searchAction %>" role="search">
+  <% if (typeof searchTab !== 'undefined' && searchTab) { %>
+    <input type="hidden" name="tab" value="<%= searchTab %>">
+  <% } %>
+  <input type="search" name="q" value="<%= q || '' %>"
+         placeholder="Search client or brand name" aria-label="Search by client name or brand name">
+  <button type="submit" class="small">Search</button>
+  <% if (q) { %>
+    <a class="search-clear"
+       href="<%= searchAction %><%= (typeof searchTab !== 'undefined' && searchTab) ? '?tab=' + searchTab : '' %>">Clear</a>
+  <% } %>
+</form>

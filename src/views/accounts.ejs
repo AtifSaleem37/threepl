@@ -14,7 +14,13 @@
   <% if (err) { %><div class="flash err"><%= err %></div><% } %>
 
   <div class="card">
-    <h2>All Invoices</h2>
+    <div class="card-head">
+      <h2>All Invoices</h2>
+      <%- include('partials/search', { searchAction: '/accounts' }) %>
+    </div>
+    <% if (q) { %>
+      <p class="search-note"><strong><%= orders.length %></strong> result<%= orders.length === 1 ? '' : 's' %> for &ldquo;<%= q %>&rdquo;</p>
+    <% } %>
     <div class="table-wrap">
       <table>
         <tr>
@@ -45,7 +51,7 @@
           </td>
         </tr>
         <% }) %>
-        <% if (orders.length === 0) { %><tr><td colspan="13">No invoices yet.</td></tr><% } %>
+        <% if (orders.length === 0) { %><tr><td colspan="13"><%= q ? 'No invoices match that client or brand name.' : 'No invoices yet.' %></td></tr><% } %>
       </table>
     </div>
     <p><small class="hint">Invoices awaiting verification are listed first. Verifying marks the invoice Paid and unlocks shipment fields for the client.</small></p>

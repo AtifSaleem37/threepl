@@ -72,7 +72,13 @@
 
   <% if (tab === 'orders') { %>
   <div class="card">
-    <h2>My Orders &amp; Invoices</h2>
+    <div class="card-head">
+      <h2>My Orders &amp; Invoices</h2>
+      <%- include('partials/search', { searchAction: '/clients', searchTab: 'orders' }) %>
+    </div>
+    <% if (q) { %>
+      <p class="search-note"><strong><%= orders.length %></strong> result<%= orders.length === 1 ? '' : 's' %> for &ldquo;<%= q %>&rdquo;</p>
+    <% } %>
     <div class="table-wrap">
       <table>
         <tr>
@@ -144,7 +150,7 @@
           <td><a href="/invoices/<%= o.invoice_no %>.pdf">PDF</a></td>
         </tr>
         <% }) %>
-        <% if (orders.length === 0) { %><tr><td colspan="12">No orders yet - use the New Prep Order tab.</td></tr><% } %>
+        <% if (orders.length === 0) { %><tr><td colspan="12"><%= q ? 'No orders match that client or brand name.' : 'No orders yet - use the New Prep Order tab.' %></td></tr><% } %>
       </table>
     </div>
   </div>
