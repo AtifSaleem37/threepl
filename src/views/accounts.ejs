@@ -1,19 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Accounts - 3PL Portal</title>
-  <link rel="stylesheet" href="/style.css">
+  <%- include('partials/head', { pageTitle: 'Accounts' }) %>
 </head>
 <body>
-<header>
-  <h1>3PL Accounts - Payment Verification</h1>
-  <div class="header-actions">
-    <%- include('partials/bell') %>
-    <form method="post" action="/accounts/logout"><button class="secondary">Log out (<%= user.username %>)</button></form>
-  </div>
-</header>
+<%- include('partials/header', {
+      portalKey: 'accounts', portalLabel: 'Accounts',
+      headerNote: 'Payment Verification',
+      logoutAction: '/accounts/logout', logoutLabel: 'Log out (' + user.username + ')'
+    }) %>
 <main>
   <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
   <% if (err) { %><div class="flash err"><%= err %></div><% } %>

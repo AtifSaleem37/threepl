@@ -1,19 +1,14 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Client - 3PL Portal</title>
-  <link rel="stylesheet" href="/style.css">
+  <%- include('partials/head', { pageTitle: 'Client' }) %>
 </head>
 <body>
-<header>
-  <h1>3PL Client Portal<%= me.client_name ? ' - ' + me.client_name : '' %></h1>
-  <div class="header-actions">
-    <%- include('partials/bell') %>
-    <form method="post" action="/clients/logout"><button class="secondary">Log out</button></form>
-  </div>
-</header>
+<%- include('partials/header', {
+      portalKey: 'client', portalLabel: 'Client',
+      headerNote: me.client_name || '',
+      logoutAction: '/clients/logout', logoutLabel: 'Log out'
+    }) %>
 <main>
   <nav class="tabs">
     <a href="/clients?tab=orders" class="<%= tab === 'orders' ? 'active' : '' %>">My Orders &amp; Invoices</a>

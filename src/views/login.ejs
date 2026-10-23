@@ -1,25 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title><%= portal.label %> Login - 3PL Portal</title>
-  <link rel="stylesheet" href="/style.css">
+  <%- include('partials/head', { pageTitle: portal.label + ' Login' }) %>
 </head>
-<body>
-  <main>
-    <div class="card login-box">
-      <h2>3PL <%= portal.label %> Login</h2>
+<body class="auth">
+  <main class="auth-main">
+    <div class="auth-card">
+      <img class="auth-logo" src="/logo.jpeg" alt="Viral Distributors">
+      <h1 class="auth-brand">Viral Distributors</h1>
+      <p class="auth-sub">3PL Prep Portal</p>
+      <span class="portal-chip solid <%= portal.key %>"><%= portal.label %> Portal</span>
+
       <% if (error) { %><div class="flash err"><%= error %></div><% } %>
+
       <form method="post" action="<%= portal.path %>/login">
         <label>Username</label>
-        <input name="username" required autofocus>
+        <input name="username" autocomplete="username" required autofocus>
         <label>Password</label>
-        <input type="password" name="password" required>
-        <br><br>
+        <input type="password" name="password" autocomplete="current-password" required>
         <button type="submit">Log in</button>
       </form>
     </div>
+    <p class="auth-foot">Viral Distributors &middot; Amazon FBA Prep &amp; Logistics</p>
   </main>
 </body>
 </html>

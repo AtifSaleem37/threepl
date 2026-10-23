@@ -26,7 +26,7 @@ const fnskuUpload = multer({
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype === 'application/pdf' && /\.pdf$/i.test(file.originalname);
-    ok ? cb(null) : cb(new Error('Only PDF files are accepted for FNSKU labels'));
+    cb(ok ? null : new Error('Only PDF files are accepted for FNSKU labels'), ok);
   }
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -61,10 +61,10 @@ const getNotifs = (role, clientId = null) =>
     .all(role, clientId);
 const HOME = { admin: '/admin', client: '/clients', accounts: '/accounts', warehouse: '/warehouse' };
 const PORTALS = {
-  admin: { path: '/admin', label: 'Admin' },
-  client: { path: '/clients', label: 'Client' },
-  accounts: { path: '/accounts', label: 'Accounts' },
-  warehouse: { path: '/warehouse', label: 'Warehouse' }
+  admin: { key: 'admin', path: '/admin', label: 'Admin' },
+  client: { key: 'client', path: '/clients', label: 'Client' },
+  accounts: { key: 'accounts', path: '/accounts', label: 'Accounts' },
+  warehouse: { key: 'warehouse', path: '/warehouse', label: 'Warehouse' }
 };
 
 // Each role has its own session slot (req.session.admin / .client / .accounts),

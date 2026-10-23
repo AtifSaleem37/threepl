@@ -1,0 +1,22 @@
+<%#
+  Branded portal header.
+  Locals: portalKey (admin|client|accounts|warehouse), portalLabel, logoutAction,
+          logoutLabel, and optionally headerNote. `notifs` comes from the parent.
+-%>
+<header>
+  <div class="brand">
+    <img class="brand-logo" src="/logo.jpeg" alt="Viral Distributors">
+    <div class="brand-text">
+      <span class="brand-name">Viral Distributors</span>
+      <span class="brand-sub">3PL Prep Portal</span>
+    </div>
+    <span class="portal-chip <%= portalKey %>"><%= portalLabel %></span>
+    <% if (typeof headerNote !== 'undefined' && headerNote) { %>
+      <span class="brand-note"><%= headerNote %></span>
+    <% } %>
+  </div>
+  <div class="header-actions">
+    <%- include('bell') %>
+    <form method="post" action="<%= logoutAction %>"><button class="secondary"><%= logoutLabel %></button></form>
+  </div>
+</header>

@@ -75,6 +75,35 @@ sudo certbot --nginx -d portal.yourdomain.com
 
 Security group: allow 80/443 only (and 22 from your IP). App listens on 127.0.0.1:3000 behind Nginx.
 
+Or run `sudo bash deploy/setup.sh`, which does all of the above in one pass.
+
+### Updating a running server
+
+`deploy/setup.sh` is for the first install; use `deploy/redeploy.sh` for every update after:
+
+```bash
+cd ~/threepl && git pull && sudo bash deploy/redeploy.sh
+```
+
+It snapshots `data/` to `~/backups/` (checkpointing the WAL first), fast-forwards to
+`origin/<branch>`, runs `npm ci --omit=dev` **only if the lockfile moved**, restarts the
+service, and health-checks `127.0.0.1:$PORT/clients`. If the new build doesn't come up it
+**rolls back to the previous commit automatically** and exits non-zero.
+
+| Flag | Effect |
+|---|---|
+| `--branch <name>` | Deploy a branch other than the current one |
+| `--force` | Redeploy even when there's nothing new to pull |
+| `--rollback` | Return to the commit that was running before the last redeploy |
+| `--skip-backup` | Skip the `data/` snapshot (not recommended) |
+
+Overridable via env: `APP_DIR`, `APP_USER`, `SERVICE_NAME`, `BACKUP_DIR`, `KEEP_BACKUPS`,
+`HEALTH_PATH`, `HEALTH_RETRIES`.
+
+Two things it deliberately does **not** touch: `.env` (it only warns when `.env.example`
+gains keys yours lacks) and the live nginx config (yours carries the `server_name` and
+certbot's TLS block — it warns and prints a `diff` command instead of overwriting).
+
 ### Email (Amazon SES)
 
 1. Verify your sending domain/address in SES, request production access.
@@ -97,7 +126,9 @@ src/server.js    routes (auth, admin, client, invoice download)
 src/db.js        schema, seed, rate resolution (global -> per-client)
 src/invoice.js   PDF generation (pdfkit)
 src/mailer.js    SES SMTP via nodemailer
-src/views/       EJS: login, admin, client
-public/style.css
+src/views/       EJS: login, admin, client, accounts, warehouse
+src/views/partials/  head (meta/title/favicon), header (brand lockup), bell
+public/style.css badge/table/tab styling on the Viral Distributors palette
+public/logo.jpeg brand logo - header lockup, login card, favicon
 deploy/          systemd unit + nginx config
 ```

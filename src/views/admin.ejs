@@ -1,19 +1,13 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Admin - 3PL Portal</title>
-  <link rel="stylesheet" href="/style.css">
+  <%- include('partials/head', { pageTitle: 'Admin' }) %>
 </head>
 <body>
-<header>
-  <h1>3PL Admin Portal</h1>
-  <div class="header-actions">
-    <%- include('partials/bell') %>
-    <form method="post" action="/admin/logout"><button class="secondary">Log out (<%= user.username %>)</button></form>
-  </div>
-</header>
+<%- include('partials/header', {
+      portalKey: 'admin', portalLabel: 'Admin',
+      logoutAction: '/admin/logout', logoutLabel: 'Log out (' + user.username + ')'
+    }) %>
 <main>
   <nav class="tabs">
     <a href="/admin?tab=orders" class="<%= tab === 'orders' ? 'active' : '' %>">Orders</a>
