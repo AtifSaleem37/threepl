@@ -96,9 +96,15 @@
           <td>
             <span class="badge <%= o.payment_status %>"><%= payLabels[o.payment_status] %></span>
             <% if (o.payment_status === 'unpaid') { %>
-              <form method="post" action="/clients/orders/<%= o.id %>/payment-sent" style="margin-top:6px">
+              <form method="post" action="/clients/orders/<%= o.id %>/payment-sent"
+                    enctype="multipart/form-data" class="pay-proof">
+                <label for="proof-<%= o.id %>">Payment screenshot *</label>
+                <input type="file" id="proof-<%= o.id %>" name="proof"
+                       accept="image/jpeg,image/png,image/webp,application/pdf" required>
                 <button type="submit" class="small">Payment sent</button>
               </form>
+            <% } else if (o.payment_proof) { %>
+              <div class="proof-link"><a href="/payment-proof/<%= o.id %>" target="_blank" rel="noopener">View payment proof</a></div>
             <% } %>
           </td>
           <% if (o.payment_status === 'paid' && ['received','prep','prep_done','sent_to_amazon'].includes(o.shipment_status)) { %>

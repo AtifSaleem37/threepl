@@ -7,6 +7,7 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'invoices'), { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'fnsku'), { recursive: true });
+fs.mkdirSync(path.join(DATA_DIR, 'payments'), { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'portal.db'));
 try { db.exec('PRAGMA journal_mode = WAL'); } catch { /* fs without WAL support */ }
@@ -173,6 +174,9 @@ if (!hasCol('order_items', 'polybag_type')) db.exec('ALTER TABLE order_items ADD
 if (!hasCol('order_items', 'ship_info')) db.exec('ALTER TABLE order_items ADD COLUMN ship_info TEXT');
 if (!hasCol('order_items', 'shipping_label_file')) db.exec('ALTER TABLE order_items ADD COLUMN shipping_label_file TEXT');
 if (!hasCol('order_items', 'shipping_label_uploaded_at')) db.exec('ALTER TABLE order_items ADD COLUMN shipping_label_uploaded_at TEXT');
+// proof-of-payment screenshot the client attaches when marking payment sent
+if (!hasCol('orders', 'payment_proof')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof TEXT');
+if (!hasCol('orders', 'payment_proof_uploaded_at')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof_uploaded_at TEXT');
 
 // migrate legacy single shipping label per item into the multi-label table
 db.exec(`

@@ -7,7 +7,7 @@ const cookieSession = require('cookie-session');
 const multer = require('multer');
 const { db, getGlobalRates, setGlobalRates, getEffectiveRates, nextInvoiceNo } = require('./db');
 const { generateInvoicePdf, buildLineItems, INVOICE_DIR } = require('./invoice');
-const { sendInvoiceEmail } = require('./mailer');
+const { sendInvoiceEmail, sendEventEmail } = require('./mailer');
 
 const app = express();
 app.set('view engine', 'ejs');
@@ -17,7 +17,9 @@ app.use(express.urlencoded({ extended: true }));
 const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const FNSKU_DIR = path.join(DATA_DIR, 'fnsku');
 const SHIPLABEL_DIR = path.join(DATA_DIR, 'shiplabels');
+const PAYMENT_DIR = path.join(DATA_DIR, 'payments');
 fs.mkdirSync(SHIPLABEL_DIR, { recursive: true });
+fs.mkdirSync(PAYMENT_DIR, { recursive: true });
 const fnskuUpload = multer({
   storage: multer.diskStorage({
     destination: FNSKU_DIR,
@@ -27,6 +29,20 @@ const fnskuUpload = multer({
   fileFilter: (req, file, cb) => {
     const ok = file.mimetype === 'application/pdf' && /\.pdf$/i.test(file.originalname);
     cb(ok ? null : new Error('Only PDF files are accepted for FNSKU labels'), ok);
+  }
+});
+// Proof-of-payment screenshot attached when the client marks payment sent.
+const PROOF_TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'application/pdf': '.pdf' };
+const proofUpload = multer({
+  storage: multer.diskStorage({
+    destination: PAYMENT_DIR,
+    filename: (req, file, cb) => cb(null, `tmp-${Date.now()}-${Math.round(Math.random() * 1e9)}`)
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = !!PROOF_TYPES[file.mimetype] &&
+      /\.(jpe?g|png|webp|pdf)$/i.test(file.originalname);
+    cb(ok ? null : new Error('Payment proof must be a JPG, PNG, WEBP or PDF file'), ok);
   }
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -71,6 +87,15 @@ function notify(role, message, clientId = null) {
     SELECT id FROM notifications WHERE role=? AND client_id IS ? ORDER BY id DESC LIMIT 5)`)
     .run(role, clientId, role, clientId);
 }
+// Order-lifecycle actions are emailed to the operations mailbox; 'tracking' and
+// 'payment' copy their own recipients too (see mailer.js). Fire-and-forget by
+// design: a mail failure is logged and never blocks the action that caused it.
+function emailEvent(order, subject, detail = '', audiences = []) {
+  if (!order) return;
+  sendEventEmail({ order, subject, detail, audiences })
+    .catch(e => console.error(`[mailer] "${subject}" for ${order.invoice_no} failed:`, e.message));
+}
+
 const getNotifs = (role, clientId = null) =>
   db.prepare('SELECT * FROM notifications WHERE role=? AND client_id IS ? ORDER BY id DESC LIMIT 5')
     .all(role, clientId);
@@ -265,6 +290,8 @@ function whTransition(from, to, doneMsg) {
     db.prepare('UPDATE orders SET shipment_status=? WHERE id=?').run(to, order.id);
     notify('client', `${order.invoice_no}: ${doneMsg}`, order.client_id);
     if (to === 'received') notify('admin', `${order.invoice_no}: received by warehouse`);
+    emailEvent({ ...order, shipment_status: to }, `Warehouse: ${SHIP_LABELS[to]}`,
+      `Warehouse moved this order from "${SHIP_LABELS[from]}" to "${SHIP_LABELS[to]}".`);
     res.redirect('/warehouse?msg=' + encodeURIComponent(`Order ${order.invoice_no} - ${SHIP_LABELS[to]}`));
   };
 }
@@ -286,6 +313,8 @@ app.post('/warehouse/orders/:id/sent-to-amazon', requireWarehouse, (req, res) =>
   db.prepare("UPDATE orders SET shipment_status='sent_to_amazon' WHERE id=?").run(order.id);
   notify('client', `${order.invoice_no}: shipment sent to Amazon`, order.client_id);
   notify('admin', `${order.invoice_no}: sent to Amazon by warehouse`);
+  emailEvent(order, 'Shipment sent to Amazon',
+    'Warehouse marked this order sent to Amazon. All ASINs had shipment info and at least one shipping label.');
   res.redirect('/warehouse?msg=' + encodeURIComponent(`Order ${order.invoice_no} - Sent to Amazon`));
 });
 
@@ -306,6 +335,9 @@ app.post('/warehouse/orders/:id/ship-info', requireWarehouse, (req, res) => {
   if (missing === 0) {
     notify('client', `${order.invoice_no}: shipment info added - please upload shipping labels for each ASIN`, order.client_id);
   }
+  emailEvent(order, 'Warehouse added shipment info',
+    `Shipment info saved for ${saved} ASIN(s).` +
+    (missing ? ` ${missing} ASIN(s) still missing info.` : ' All ASINs now have info; client asked to upload shipping labels.'));
   res.redirect('/warehouse?msg=' + encodeURIComponent(
     missing ? `Shipment info saved - ${missing} ASIN(s) still missing info` : 'Shipment info saved for all ASINs - client notified'));
 });
@@ -340,6 +372,9 @@ app.post('/accounts/orders/:id/verify', requireAccounts, (req, res) => {
   db.prepare("UPDATE orders SET payment_status='paid' WHERE id=?").run(order.id);
   notify('client', `${order.invoice_no}: payment verified - shipment details unlocked`, order.client_id);
   notify('admin', `${order.invoice_no}: payment verified by accounts`);
+  emailEvent({ ...order, payment_status: 'paid' }, 'Payment verified',
+    `Accounts (${req.session.accounts.username}) verified payment. The invoice is now Paid and the client can enter shipment details.`,
+    ['payment']);
   res.redirect('/accounts?msg=Payment verified');
 });
 
@@ -349,6 +384,9 @@ app.post('/accounts/orders/:id/reject', requireAccounts, (req, res) => {
   if (!order) return res.redirect('/accounts?err=' + encodeURIComponent('Order is not awaiting verification'));
   db.prepare("UPDATE orders SET payment_status='unpaid' WHERE id=?").run(order.id);
   notify('client', `${order.invoice_no}: payment not received - invoice set back to unpaid`, order.client_id);
+  emailEvent({ ...order, payment_status: 'unpaid' }, 'Payment NOT received',
+    `Accounts (${req.session.accounts.username}) marked the payment as not received. The invoice is back to Unpaid.`,
+    ['payment']);
   res.redirect('/accounts?msg=Payment rejected - set back to unpaid');
 });
 
@@ -393,15 +431,44 @@ app.get('/clients', (req, res, next) => {
   });
 });
 
-// Client marks payment as sent -> goes to verification
+// Client marks payment as sent, attaching a proof-of-payment screenshot -> verification
 app.post('/clients/orders/:id/payment-sent', requireClient, (req, res) => {
-  const order = db.prepare("SELECT * FROM orders WHERE id=? AND client_id=? AND payment_status='unpaid'")
-    .get(req.params.id, req.session.client.id);
-  if (!order) return res.redirect('/clients?err=' + encodeURIComponent('Order not found or not in unpaid state'));
-  db.prepare("UPDATE orders SET payment_status='verification' WHERE id=?").run(order.id);
-  notify('accounts', `${order.invoice_no}: client marked payment sent - please verify`);
-  notify('admin', `${order.invoice_no}: payment marked sent by ${order.business_name}`);
-  res.redirect('/clients?msg=' + encodeURIComponent('Payment marked as sent - awaiting verification by accounts'));
+  proofUpload.single('proof')(req, res, err => {
+    if (err) return res.redirect('/clients?err=' + encodeURIComponent(err.message));
+    const order = db.prepare("SELECT * FROM orders WHERE id=? AND client_id=? AND payment_status='unpaid'")
+      .get(req.params.id, req.session.client.id);
+    if (!order) {
+      if (req.file) fs.unlinkSync(req.file.path);
+      return res.redirect('/clients?err=' + encodeURIComponent('Order not found or not in unpaid state'));
+    }
+    if (!req.file) {
+      return res.redirect('/clients?err=' + encodeURIComponent('Attach a screenshot of the payment before marking it sent'));
+    }
+    const finalName = `order${order.id}-payment${PROOF_TYPES[req.file.mimetype]}`;
+    fs.renameSync(req.file.path, path.join(PAYMENT_DIR, finalName));
+    db.prepare(`UPDATE orders SET payment_status='verification', payment_proof=?,
+                payment_proof_uploaded_at=datetime('now') WHERE id=?`).run(finalName, order.id);
+
+    notify('accounts', `${order.invoice_no}: client marked payment sent (proof attached) - please verify`);
+    notify('admin', `${order.invoice_no}: payment marked sent by ${order.business_name}`);
+    emailEvent({ ...order, payment_status: 'verification' }, 'Payment sent - proof uploaded',
+      `${order.business_name} marked this invoice as paid and uploaded a proof-of-payment screenshot ` +
+      `(${req.file.originalname}).\nAwaiting verification by accounts.`,
+      ['payment']);
+    res.redirect('/clients?msg=' + encodeURIComponent('Payment marked as sent - awaiting verification by accounts'));
+  });
+});
+
+// Payment proof (client: own only; admin, accounts & warehouse: any). Shown inline.
+app.get('/payment-proof/:orderId', (req, res) => {
+  const s = req.session || {};
+  if (!s.admin && !s.accounts && !s.warehouse && !s.client) return res.redirect('/clients');
+  const order = db.prepare('SELECT * FROM orders WHERE id=?').get(req.params.orderId);
+  if (!order || !order.payment_proof) return res.status(404).send('Not found');
+  if (!s.admin && !s.accounts && !s.warehouse && order.client_id !== s.client.id) {
+    return res.status(403).send('Forbidden');
+  }
+  res.sendFile(path.join(PAYMENT_DIR, order.payment_proof));
 });
 
 // Submit order (multiple products) -> generate + email invoice
@@ -462,6 +529,9 @@ app.post('/clients/orders', requireClient, async (req, res) => {
   const order = db.prepare('SELECT * FROM orders WHERE id=?').get(info.lastInsertRowid);
   notify('admin', `New order ${invoice_no} from ${order.business_name} (${quantity} units, $${total.toFixed(2)})`);
   notify('accounts', `New invoice ${invoice_no} for ${order.business_name} ($${total.toFixed(2)})`);
+  emailEvent(order, 'New prep order submitted',
+    `${order.business_name} submitted a new prep order.\n` +
+    `Products:\n${items.map(i => `  - ${i.asin} x ${i.quantity}${i.polybag_type ? ` (${i.polybag_type})` : ''}`).join('\n')}`);
   try {
     const pdfPath = await generateInvoicePdf(order);
     await sendInvoiceEmail(order, pdfPath);
@@ -493,6 +563,23 @@ app.post('/clients/orders/:id/shipment', requireClient, (req, res) => {
     .run(status, req.body.carrier || null, req.body.tracking_id || null, order.id);
   if (status === 'shipped' && order.shipment_status !== 'shipped') {
     notify('warehouse', `${order.invoice_no}: marked shipped by ${order.business_name} (${req.body.carrier || '-'} / ${req.body.tracking_id || '-'})`);
+  }
+  // "Tracking added" copies the tracking mailbox - on first entry and on any later correction.
+  const newTracking = (req.body.tracking_id || '').trim();
+  const updated = { ...order, shipment_status: status, carrier: req.body.carrier || null, tracking_id: newTracking || null };
+  if (newTracking && newTracking !== (order.tracking_id || '')) {
+    emailEvent(updated, 'Tracking added',
+      `${order.business_name} added tracking for this shipment.\n\n` +
+      `Carrier:     ${req.body.carrier || '-'}\n` +
+      `Tracking ID: ${newTracking}\n` +
+      `Status:      ${SHIP_LABELS[status] || status}` +
+      (order.tracking_id ? `\n\n(Replaces previous tracking ID: ${order.tracking_id})` : ''),
+      ['tracking']);
+  } else if (status === 'shipped' && order.shipment_status !== 'shipped') {
+    emailEvent(updated, 'Marked shipped',
+      `${order.business_name} marked this shipment as sent to the warehouse.\n\n` +
+      `Carrier:     ${req.body.carrier || '-'}\n` +
+      `Tracking ID: ${newTracking || '-'}`);
   }
   if (status === 'shipped') {
     // open the FNSKU upload popup only if any product is still missing its label
@@ -526,6 +613,9 @@ app.post('/clients/orders/:id/fnsku', requireClient, (req, res) => {
     if (!saved) return res.redirect(`/clients?fnsku=${order.id}&err=` + encodeURIComponent('No PDF files were uploaded'));
     const remaining = db.prepare('SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL').get(order.id).c;
     if (remaining === 0) notify('warehouse', `${order.invoice_no}: all FNSKU labels uploaded`);
+    emailEvent(order, 'FNSKU labels uploaded',
+      `${order.business_name} uploaded ${saved} FNSKU label(s).` +
+      (remaining ? ` ${remaining} ASIN(s) still missing labels.` : ' All ASINs now have labels.'));
     res.redirect('/clients?msg=' + encodeURIComponent(
       remaining ? `${saved} FNSKU label(s) uploaded - ${remaining} ASIN(s) still missing labels` : 'All FNSKU labels uploaded'));
   });
@@ -555,6 +645,9 @@ app.post('/clients/orders/:id/shipping-labels', requireClient, (req, res) => {
       SELECT COUNT(*) c FROM order_items i WHERE i.order_id=?
         AND NOT EXISTS (SELECT 1 FROM shipping_labels l WHERE l.item_id = i.id)`).get(order.id).c;
     if (remaining === 0) notify('warehouse', `${order.invoice_no}: shipping labels uploaded by client - ready to send to Amazon`);
+    emailEvent(order, 'Shipping labels uploaded',
+      `${order.business_name} uploaded ${saved} shipping label(s).` +
+      (remaining ? ` ${remaining} ASIN(s) still missing a label.` : ' Every ASIN now has a label; ready to send to Amazon.'));
     res.redirect('/clients?msg=' + encodeURIComponent(
       remaining ? `${saved} shipping label(s) uploaded - ${remaining} ASIN(s) still missing` : `${saved} shipping label(s) uploaded - warehouse notified`));
   });
