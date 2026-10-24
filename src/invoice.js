@@ -3,6 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const INVOICE_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'invoices');
+const LOGO_PATH = path.join(__dirname, '..', 'public', 'logo.jpeg');
 
 // Band label for the volume discount, kept in sync with db.js DISCOUNT_TIERS.
 const tierLabelFor = qty => {
@@ -40,12 +41,25 @@ function generateInvoicePdf(order) {
     phone: process.env.COMPANY_PHONE || ''
   };
 
-  // Header
-  doc.font('Helvetica-Bold').fontSize(24).fillColor('#9db3d1').text('3PL SERVICE INVOICE', 40, 45);
+  // Header: logo top-left, title beside it, company name right-aligned.
+  // Title drops to 20pt so it clears the company name at x=350 once the logo
+  // pushes it right; without a logo it keeps the original 24pt at x=40.
+  let titleX = 40, titleSize = 24;
+  if (fs.existsSync(LOGO_PATH)) {
+    try {
+      doc.image(LOGO_PATH, 40, 38, { fit: [56, 56] });
+      titleX = 106; titleSize = 20;
+    } catch (e) {
+      console.error('[invoice] logo could not be embedded:', e.message);
+    }
+  }
+  doc.font('Helvetica-Bold').fontSize(titleSize).fillColor('#9db3d1')
+    .text('3PL SERVICE INVOICE', titleX, titleX === 40 ? 45 : 54);
   doc.fontSize(20).fillColor(NAVY).text(company.name, 350, 45, { width: 220, align: 'right' });
 
-  // Company block
-  let y = 95;
+  // Company block - starts below the logo (which ends at y=94)
+  const y0 = titleX === 40 ? 95 : 104;
+  let y = y0;
   doc.rect(40, y, 140, 16).fill(NAVY);
   doc.fillColor('white').font('Helvetica-Bold').fontSize(9).text('Company Name', 46, y + 4);
   doc.fillColor('black').font('Helvetica').fontSize(9);
@@ -55,10 +69,11 @@ function generateInvoicePdf(order) {
   }
 
   // Date / Invoice #
-  doc.font('Helvetica-Bold').text('DATE', 400, 100).text('Invoice #', 400, 116);
+  const metaY = y0;
+  doc.font('Helvetica-Bold').text('DATE', 400, metaY + 5).text('Invoice #', 400, metaY + 21);
   doc.font('Helvetica')
-    .text(new Date(order.created_at + 'Z').toLocaleDateString('en-US'), 470, 100)
-    .text(order.invoice_no, 470, 116);
+    .text(new Date(order.created_at + 'Z').toLocaleDateString('en-US'), 470, metaY + 5)
+    .text(order.invoice_no, 470, metaY + 21);
 
   // Vendor / Service details
   y = Math.max(y + 8, 170);
@@ -118,7 +133,13 @@ function generateInvoicePdf(order) {
     y += 16;
   };
   label('SUBTOTAL', money(order.subtotal));
-  label('DISCOUNT', order.discount_pct ? `${order.discount_pct}%  (${tierLabelFor(order.quantity)})` : '-');
+  // The band name is set to the LEFT of the totals column - it does not fit in
+  // the 90pt value field and would otherwise clip behind the TOTAL bar.
+  if (order.discount_pct) {
+    doc.font('Helvetica').fontSize(8).fillColor('#5f6f8a')
+      .text(`volume tier: ${tierLabelFor(order.quantity)}`, 215, y + 3, { width: 180, align: 'right' });
+  }
+  label('DISCOUNT', order.discount_pct ? `${order.discount_pct}%` : '-');
   doc.rect(395, y - 2, 177, 18).fill(NAVY);
   doc.fillColor('white').font('Helvetica-Bold').fontSize(10)
     .text('TOTAL', 400, y + 2)
