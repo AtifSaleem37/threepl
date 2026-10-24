@@ -33,9 +33,22 @@ Sessions are stored per role, so all four portals can be logged in simultaneousl
 | FBA Prep / FNSKU Labeling | per unit | always (all units) |
 | Poly bag & bubble wrap | per unit | **only units of products where selected** |
 | Cartonization & Outbound Handling | per carton (cartons = ⌈total quantity ÷ 50⌉) | always |
-| Discount % | applied to subtotal | if set |
+| Volume discount | % of subtotal, by total units | always |
 
-Rates: admin sets global defaults; per-client overrides win where set (blank = use global). Rates are snapshotted onto each order, so later rate changes don't alter past invoices.
+Volume discount bands (percentages editable in **Admin → Clients & Rates**; the quantity
+bands themselves are fixed):
+
+| Total units on the order | Discount |
+|---|---|
+| 0 – 500 | 5% |
+| 501 – 1,000 | 10% |
+| 1,001 – 1,500 | 15% |
+| 1,501 and above | 20% |
+
+The discount applies to every client — there is no per-client discount override. Per-client
+overrides for inbound, FNSKU, polybag and carton rates still apply (blank = use global).
+Rates and the discount are snapshotted onto each order, so later changes never alter past
+invoices.
 
 ## Run locally
 

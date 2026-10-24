@@ -214,7 +214,12 @@ const DEFAULT_RATES = {
   rate_fnsku: '0.60',     // per unit - FBA Prep / FNSKU Labeling
   rate_polybag: '0.65',   // per unit - Polybagging (only if selected)
   rate_carton: '5.00',    // per carton - Cartonization & Outbound Handling
-  discount_pct: '0'
+  // Volume discount, picked by total units on the order. Percentages are
+  // admin-editable; the quantity bands themselves are fixed.
+  discount_t1: '5',       // 0 - 500 units
+  discount_t2: '10',      // 501 - 1000 units
+  discount_t3: '15',      // 1001 - 1500 units
+  discount_t4: '20'       // 1501+ units
 };
 const setSetting = db.prepare('INSERT OR IGNORE INTO settings (key,value) VALUES (?,?)');
 for (const [k, v] of Object.entries(DEFAULT_RATES)) setSetting.run(k, v);
@@ -237,8 +242,7 @@ function getGlobalRates() {
     inbound: parseFloat(s.rate_inbound),
     fnsku: parseFloat(s.rate_fnsku),
     polybag: parseFloat(s.rate_polybag),
-    carton: parseFloat(s.rate_carton),
-    discount_pct: parseFloat(s.discount_pct)
+    carton: parseFloat(s.rate_carton)
   };
 }
 
@@ -248,11 +252,39 @@ function setGlobalRates(r) {
   up.run(String(r.fnsku), 'rate_fnsku');
   up.run(String(r.polybag), 'rate_polybag');
   up.run(String(r.carton), 'rate_carton');
-  up.run(String(r.discount_pct), 'discount_pct');
 }
 
-// Effective rates for a client = per-client override where set, else global
-function getEffectiveRates(clientId) {
+// ---- volume discount ----
+// Bands are fixed; only the percentages are editable from the admin portal.
+const DISCOUNT_TIERS = [
+  { key: 'discount_t1', min: 0, max: 500, label: '0 - 500 units' },
+  { key: 'discount_t2', min: 501, max: 1000, label: '501 - 1,000 units' },
+  { key: 'discount_t3', min: 1001, max: 1500, label: '1,001 - 1,500 units' },
+  { key: 'discount_t4', min: 1501, max: Infinity, label: '1,501 units and above' }
+];
+
+function getDiscountTiers() {
+  const rows = db.prepare('SELECT key,value FROM settings').all();
+  const s = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  return DISCOUNT_TIERS.map(t => ({ ...t, pct: parseFloat(s[t.key]) || 0 }));
+}
+
+function setDiscountTiers(pcts) {
+  const up = db.prepare(`INSERT INTO settings (key,value) VALUES (?,?)
+                         ON CONFLICT(key) DO UPDATE SET value=excluded.value`);
+  DISCOUNT_TIERS.forEach((t, i) => up.run(t.key, String(pcts[i])));
+}
+
+// Which band a quantity falls into. Quantities below the first band (only
+// possible for malformed data) fall back to the lowest tier.
+function tierForQuantity(qty) {
+  const tiers = getDiscountTiers();
+  return tiers.find(t => qty >= t.min && qty <= t.max) || tiers[0];
+}
+
+// Effective rates for a client = per-client override where set, else global.
+// The discount is NOT overridable - total units always decide it.
+function getEffectiveRates(clientId, quantity = 0) {
   const g = getGlobalRates();
   const o = db.prepare('SELECT * FROM client_rates WHERE client_id=?').get(clientId) || {};
   const pick = (ov, gl) => (ov !== null && ov !== undefined ? ov : gl);
@@ -261,7 +293,7 @@ function getEffectiveRates(clientId) {
     fnsku: pick(o.fnsku, g.fnsku),
     polybag: pick(o.polybag, g.polybag),
     carton: pick(o.carton, g.carton),
-    discount_pct: pick(o.discount_pct, g.discount_pct)
+    discount_pct: tierForQuantity(quantity).pct
   };
 }
 
@@ -271,4 +303,7 @@ function nextInvoiceNo() {
   return `${prefix}-${String(10001 + row.c)}`;
 }
 
-module.exports = { db, getGlobalRates, setGlobalRates, getEffectiveRates, nextInvoiceNo };
+module.exports = {
+  db, getGlobalRates, setGlobalRates, getEffectiveRates, nextInvoiceNo,
+  DISCOUNT_TIERS, getDiscountTiers, setDiscountTiers, tierForQuantity
+};

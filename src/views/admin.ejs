@@ -127,7 +127,7 @@
   <div class="card">
     <h2>Global Rates (defaults)</h2>
     <form method="post" action="/admin/rates">
-      <div class="grid cols-5">
+      <div class="grid cols-4">
         <div><label>Inbound Receiving ($/unit)</label>
           <input name="inbound" type="number" step="0.01" min="0" value="<%= rates.inbound %>"></div>
         <div><label>FNSKU Labeling ($/unit)</label>
@@ -136,11 +136,27 @@
           <input name="polybag" type="number" step="0.01" min="0" value="<%= rates.polybag %>"></div>
         <div><label>Cartonization ($/carton)</label>
           <input name="carton" type="number" step="0.01" min="0" value="<%= rates.carton %>"></div>
-        <div><label>Discount (%)</label>
-          <input name="discount_pct" type="number" step="0.1" min="0" max="100" value="<%= rates.discount_pct %>"></div>
       </div>
       <br><button type="submit">Save global rates</button>
       <p><small class="hint">Polybagging is only charged when selected in the prep requirement. Cartons = quantity &divide; 50 (rounded up).</small></p>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Volume Discount Tiers</h2>
+    <p><small class="hint">The discount is chosen automatically from the <strong>total units</strong> on an order.
+      It applies to every client - there is no per-client discount override. Quantity bands are fixed; edit the percentages here.</small></p>
+    <form method="post" action="/admin/discount-tiers">
+      <div class="grid cols-4">
+        <% discountTiers.forEach((t, i) => { %>
+          <div>
+            <label><%= t.label %></label>
+            <input name="t<%= i + 1 %>" type="number" step="0.1" min="0" max="100" value="<%= t.pct %>" required>
+          </div>
+        <% }) %>
+      </div>
+      <br><button type="submit">Save discount tiers</button>
+      <p><small class="hint">Applied to the subtotal. Rates and the discount are snapshotted onto each order, so changes here never alter past invoices.</small></p>
     </form>
   </div>
 
@@ -163,7 +179,6 @@
               <input name="fnsku" type="number" step="0.01" min="0" placeholder="FNSKU" value="<%= c.o_fnsku ?? '' %>" title="FNSKU $/unit">
               <input name="polybag" type="number" step="0.01" min="0" placeholder="Polybag" value="<%= c.o_polybag ?? '' %>" title="Polybag $/unit">
               <input name="carton" type="number" step="0.01" min="0" placeholder="Carton" value="<%= c.o_carton ?? '' %>" title="Carton $/carton">
-              <input name="discount_pct" type="number" step="0.1" min="0" max="100" placeholder="Disc %" value="<%= c.o_discount ?? '' %>" title="Discount %">
               <button type="submit">Save</button>
             </form>
           </td>

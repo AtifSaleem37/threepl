@@ -156,6 +156,7 @@ button.small { padding:6px 11px; font-size:12px; }
 .grid { display:grid; gap:14px; }
 .grid.cols-2 { grid-template-columns:repeat(2,1fr); }
 .grid.cols-3 { grid-template-columns:repeat(3,1fr); }
+.grid.cols-4 { grid-template-columns:repeat(4,1fr); }
 .grid.cols-5 { grid-template-columns:repeat(5,1fr); }
 
 .checks { display:flex; flex-wrap:wrap; gap:10px; margin-top:4px; }
@@ -324,6 +325,7 @@ body.auth {
 /* ---- responsive --------------------------------------------------------- */
 @media (max-width:900px) {
   .grid.cols-5 { grid-template-columns:repeat(2,1fr); }
+  .grid.cols-4 { grid-template-columns:repeat(2,1fr); }
   .grid.cols-3 { grid-template-columns:repeat(2,1fr); }
 }
 @media (max-width:640px) {
@@ -331,7 +333,7 @@ body.auth {
   .brand-note { padding-left:0; border-left:none; flex-basis:100%; }
   main { margin:18px auto 36px; padding:0 14px; }
   .card { padding:18px 16px; }
-  .grid.cols-2, .grid.cols-3, .grid.cols-5 { grid-template-columns:1fr; }
+  .grid.cols-2, .grid.cols-3, .grid.cols-4, .grid.cols-5 { grid-template-columns:1fr; }
   .product-row { grid-template-columns:1fr; }
   .tabs { width:100%; }
   .tabs a { flex:1; text-align:center; }

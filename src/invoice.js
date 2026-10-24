@@ -4,6 +4,13 @@ const path = require('path');
 
 const INVOICE_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, '..', 'data'), 'invoices');
 
+// Band label for the volume discount, kept in sync with db.js DISCOUNT_TIERS.
+const tierLabelFor = qty => {
+  const { DISCOUNT_TIERS } = require('./db');
+  const t = DISCOUNT_TIERS.find(x => qty >= x.min && qty <= x.max) || DISCOUNT_TIERS[0];
+  return t.label;
+};
+
 const NAVY = '#3d5a99';
 const LIGHT = '#dce6f1';
 
@@ -111,7 +118,7 @@ function generateInvoicePdf(order) {
     y += 16;
   };
   label('SUBTOTAL', money(order.subtotal));
-  label('DISCOUNT', order.discount_pct ? `${order.discount_pct}%` : '-');
+  label('DISCOUNT', order.discount_pct ? `${order.discount_pct}%  (${tierLabelFor(order.quantity)})` : '-');
   doc.rect(395, y - 2, 177, 18).fill(NAVY);
   doc.fillColor('white').font('Helvetica-Bold').fontSize(10)
     .text('TOTAL', 400, y + 2)

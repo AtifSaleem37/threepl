@@ -5,7 +5,8 @@ const fs = require('fs');
 const bcrypt = require('bcryptjs');
 const cookieSession = require('cookie-session');
 const multer = require('multer');
-const { db, getGlobalRates, setGlobalRates, getEffectiveRates, nextInvoiceNo } = require('./db');
+const { db, getGlobalRates, setGlobalRates, getEffectiveRates, nextInvoiceNo,
+        getDiscountTiers, setDiscountTiers } = require('./db');
 const { generateInvoicePdf, buildLineItems, INVOICE_DIR } = require('./invoice');
 const { sendInvoiceEmail, sendEventEmail } = require('./mailer');
 
@@ -185,6 +186,7 @@ app.get('/admin', (req, res, next) => {
     user: req.session.admin,
     orders, clients, staffUsers, q,
     rates: getGlobalRates(),
+    discountTiers: getDiscountTiers(),
     payLabels: PAY_LABELS,
     shipLabels: SHIP_LABELS,
     notifs: getNotifs('admin'),
@@ -226,27 +228,37 @@ app.post('/admin/clients/:id/password', requireAdmin, (req, res) => {
 
 // Global rates
 app.post('/admin/rates', requireAdmin, (req, res) => {
-  const { inbound, fnsku, polybag, carton, discount_pct } = req.body;
+  const { inbound, fnsku, polybag, carton } = req.body;
   setGlobalRates({
     inbound: parseFloat(inbound) || 0,
     fnsku: parseFloat(fnsku) || 0,
     polybag: parseFloat(polybag) || 0,
-    carton: parseFloat(carton) || 0,
-    discount_pct: parseFloat(discount_pct) || 0
+    carton: parseFloat(carton) || 0
   });
   res.redirect('/admin?tab=clients&msg=Global rates updated');
+});
+
+// Volume discount percentages (quantity bands are fixed in db.js)
+app.post('/admin/discount-tiers', requireAdmin, (req, res) => {
+  const pcts = ['t1', 't2', 't3', 't4'].map(k => {
+    const n = parseFloat(req.body[k]);
+    return Number.isFinite(n) ? Math.min(100, Math.max(0, n)) : 0;
+  });
+  setDiscountTiers(pcts);
+  res.redirect('/admin?tab=clients&msg=' + encodeURIComponent('Discount tiers updated'));
 });
 
 // Per-client rate overrides (blank field = use global)
 app.post('/admin/clients/:id/rates', requireAdmin, (req, res) => {
   const num = v => (v === '' || v === undefined ? null : parseFloat(v));
+  // discount_pct is intentionally NULL: volume tiers decide the discount now.
   db.prepare(`INSERT INTO client_rates (client_id,inbound,fnsku,polybag,carton,discount_pct)
-              VALUES (?,?,?,?,?,?)
+              VALUES (?,?,?,?,?,NULL)
               ON CONFLICT(client_id) DO UPDATE SET
                 inbound=excluded.inbound, fnsku=excluded.fnsku, polybag=excluded.polybag,
-                carton=excluded.carton, discount_pct=excluded.discount_pct`)
+                carton=excluded.carton, discount_pct=NULL`)
     .run(req.params.id, num(req.body.inbound), num(req.body.fnsku),
-         num(req.body.polybag), num(req.body.carton), num(req.body.discount_pct));
+         num(req.body.polybag), num(req.body.carton));
   res.redirect('/admin?tab=clients&msg=Client rates updated');
 });
 
@@ -504,7 +516,7 @@ app.post('/clients/orders', requireClient, async (req, res) => {
 
   const quantity = items.reduce((s, i) => s + i.quantity, 0);
   const polybagQty = items.reduce((s, i) => s + (i.polybag ? i.quantity : 0), 0);
-  const rates = getEffectiveRates(req.session.client.id);
+  const rates = getEffectiveRates(req.session.client.id, quantity);
   const cartons = Math.ceil(quantity / 50);
 
   let subtotal =
