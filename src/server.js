@@ -138,6 +138,9 @@ const PO_LABELS = {
 };
 // Linear pipeline; a PO only ever moves to its single next state.
 const PO_NEXT = { po_placed: 'shipped', shipped: 'received', received: 'prep', prep: 'sent_to_amazon' };
+// A photo is only demanded on arrival at the warehouse and on despatch to
+// Amazon. The two steps in between take one if offered but do not require it.
+const PO_PHOTO_REQUIRED = ['received', 'sent_to_amazon'];
 // "PO placed by Ahmed" - first name only, as asked.
 const firstNameOf = u => String(u.client_name || u.username || '').trim().split(/\s+/)[0] || u.username;
 
@@ -419,7 +422,7 @@ app.get('/p2p', (req, res, next) => {
   }
   res.render('p2p', {
     user: req.session.p2p, pos, eventsByPo, q,
-    poLabels: PO_LABELS, poNext: PO_NEXT,
+    poLabels: PO_LABELS, poNext: PO_NEXT, poPhotoRequired: PO_PHOTO_REQUIRED,
     notifs: getNotifs('p2p'),
     openNew: req.query.new === '1',
     msg: req.query.msg || null,
@@ -471,7 +474,9 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
     if (req.body.from && req.body.from !== po.status) {
       return fail(`${po.po_number} has already moved to "${PO_LABELS[po.status]}"`);
     }
-    if (!req.file) return fail(`A photo is required to move ${po.po_number} to "${PO_LABELS[next]}"`);
+    if (PO_PHOTO_REQUIRED.includes(next) && !req.file) {
+      return fail(`A photo is required to move ${po.po_number} to "${PO_LABELS[next]}"`);
+    }
 
     let detail = '';
     if (next === 'shipped') {
@@ -488,8 +493,11 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
 
     const me = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.p2p.id);
     const who = firstNameOf(me);
-    const photoName = `po${po.id}-${next}-${Date.now()}${PHOTO_TYPES[req.file.mimetype]}`;
-    fs.renameSync(req.file.path, path.join(PO_PHOTO_DIR, photoName));
+    let photoName = null;
+    if (req.file) {
+      photoName = `po${po.id}-${next}-${Date.now()}${PHOTO_TYPES[req.file.mimetype]}`;
+      fs.renameSync(req.file.path, path.join(PO_PHOTO_DIR, photoName));
+    }
 
     db.prepare("UPDATE purchase_orders SET status=?, updated_at=datetime('now') WHERE id=?").run(next, po.id);
     db.prepare('INSERT INTO po_events (po_id, status, photo, detail, user_id, user_name) VALUES (?,?,?,?,?,?)')

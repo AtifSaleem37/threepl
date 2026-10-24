@@ -81,9 +81,11 @@
                   <input name="tracking_id" placeholder="Tracking ID" required>
                   <input name="pallets" type="number" min="1" placeholder="Pallets" required>
                 <% } %>
-                <label for="photo-<%= po.id %>">Photo *</label>
-                <input type="file" id="photo-<%= po.id %>" name="photo"
-                       accept="image/jpeg,image/png,image/webp,image/heic" required>
+                <% if (poPhotoRequired.includes(next)) { %>
+                  <label for="photo-<%= po.id %>">Photo *</label>
+                  <input type="file" id="photo-<%= po.id %>" name="photo"
+                         accept="image/jpeg,image/png,image/webp,image/heic" required>
+                <% } %>
                 <button type="submit" class="small">Mark <%= poLabels[next] %></button>
               </form>
             <% } else { %>
@@ -98,7 +100,8 @@
       </table>
     </div>
     <p><small class="hint">Pipeline: PO placed &rarr; Shipped &rarr; Received &rarr; Prep in progress &rarr; Sent to Amazon.
-      Every status change needs a photo and records who made it.</small></p>
+      Every change records who made it. A photo is required for <strong>Received</strong> and
+      <strong>Sent to Amazon</strong>; Shipped needs carrier, tracking ID and pallet count.</small></p>
   </div>
 </main>
 
@@ -114,7 +117,7 @@
       <div><label>Quantity *</label><input name="quantity" type="number" min="1" required></div>
     </div>
     <p><small class="hint">All fields are required. The PO is created at <strong>PO placed</strong>,
-      recorded against your name. A photo is required from the next status onward.</small></p>
+      recorded against your name.</small></p>
     <div class="dialog-actions">
       <button type="submit" id="placePoBtn" disabled>PO placed</button>
       <button type="button" class="secondary" id="closePoBtn">Cancel</button>
