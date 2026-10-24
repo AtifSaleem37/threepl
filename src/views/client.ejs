@@ -83,7 +83,7 @@
       <table>
         <tr>
           <th>Invoice #</th><th>Brand</th><th>ASIN(s)</th><th>Prep</th><th>Qty</th><th>Total</th>
-          <th>Invoice Status</th><th>Shipment Status</th><th>Carrier</th><th>Tracking ID</th><th>FNSKU</th><th>Invoice</th>
+          <th>Invoice Status</th><th>Shipment Status</th><th>Carrier</th><th>Tracking ID</th><th>Created</th><th>Updated</th><th>FNSKU</th><th>Invoice</th>
         </tr>
         <% orders.forEach(o => { %>
         <tr>
@@ -148,6 +148,8 @@
           <td><span class="badge status"><%= o.shipment_status %></span></td>
           <td colspan="2"><small class="hint"><%= o.payment_status === 'verification' ? 'Unlocks once accounts verifies your payment' : 'Unlocks after payment is sent and verified' %></small></td>
           <% } %>
+          <td class="ts-cell"><%- include('partials/ts', { value: o.created_at }) %></td>
+          <td class="ts-cell"><%- include('partials/ts', { value: o.updated_at || o.created_at }) %></td>
           <td>
             <% if (o.shipment_status === 'shipped' || o.shipment_status === 'received') { %>
               <a href="/clients?fnsku=<%= o.id %>">Labels</a>
@@ -156,7 +158,7 @@
           <td><a href="/invoices/<%= o.invoice_no %>.pdf">PDF</a></td>
         </tr>
         <% }) %>
-        <% if (orders.length === 0) { %><tr><td colspan="12"><%= q ? 'No orders match that client or brand name.' : 'No orders yet - use the New Prep Order tab.' %></td></tr><% } %>
+        <% if (orders.length === 0) { %><tr><td colspan="14"><%= q ? 'No orders match that client or brand name.' : 'No orders yet - use the New Prep Order tab.' %></td></tr><% } %>
       </table>
     </div>
   </div>
@@ -230,5 +232,6 @@
   <script>document.getElementById('shipLabelModal').showModal();</script>
   <% } %>
 </main>
+<%- include('partials/localtime') %>
 </body>
 </html>

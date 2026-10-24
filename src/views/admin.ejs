@@ -33,7 +33,7 @@
         <tr>
           <th>Invoice #</th><th>Client Name</th><th>Email</th><th>Store Name</th><th>Brand</th><th>ASIN(s)</th>
           <th>Prep Requirement</th><th>Qty</th><th>Total</th><th>Shipment Status</th>
-          <th>Payment Status</th><th>Tracking ID</th><th>Carrier</th>
+          <th>Payment Status</th><th>Tracking ID</th><th>Carrier</th><th>Created</th><th>Updated</th>
         </tr>
         <% orders.forEach(o => { %>
         <tr>
@@ -50,9 +50,11 @@
           <td><span class="badge <%= o.payment_status %>"><%= payLabels[o.payment_status] %></span></td>
           <td><%= o.tracking_id || '-' %></td>
           <td><%= o.carrier || '-' %></td>
+          <td class="ts-cell"><%- include('partials/ts', { value: o.created_at }) %></td>
+          <td class="ts-cell"><%- include('partials/ts', { value: o.updated_at || o.created_at }) %></td>
         </tr>
         <% }) %>
-        <% if (orders.length === 0) { %><tr><td colspan="13"><%= q ? 'No orders match that client or brand name.' : 'No orders yet.' %></td></tr><% } %>
+        <% if (orders.length === 0) { %><tr><td colspan="15"><%= q ? 'No orders match that client or brand name.' : 'No orders yet.' %></td></tr><% } %>
       </table>
     </div>
   </div>
@@ -179,5 +181,6 @@
   </div>
   <% } %>
 </main>
+<%- include('partials/localtime') %>
 </body>
 </html>

@@ -1,0 +1,19 @@
+<script>
+// Rewrite every <time class="ts"> from stored UTC into the viewer's timezone.
+(function () {
+  var fmt;
+  try {
+    fmt = new Intl.DateTimeFormat(undefined, {
+      day: '2-digit', month: 'short', year: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  } catch (e) { return; }               // leave the UTC text in place
+  document.querySelectorAll('time.ts').forEach(function (el) {
+    var d = new Date(el.getAttribute('datetime'));
+    if (!isNaN(d.getTime())) {
+      el.textContent = fmt.format(d).replace(',', '');
+      el.title = el.getAttribute('datetime').replace('T', ' ').replace('Z', ' UTC');
+    }
+  });
+})();
+</script>

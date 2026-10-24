@@ -65,7 +65,8 @@ CREATE TABLE IF NOT EXISTS orders (
   shipment_status TEXT NOT NULL DEFAULT 'pending',
   carrier TEXT,
   tracking_id TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS order_items (
@@ -177,6 +178,12 @@ if (!hasCol('order_items', 'shipping_label_uploaded_at')) db.exec('ALTER TABLE o
 // proof-of-payment screenshot the client attaches when marking payment sent
 if (!hasCol('orders', 'payment_proof')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof TEXT');
 if (!hasCol('orders', 'payment_proof_uploaded_at')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof_uploaded_at TEXT');
+// last-activity timestamp; SQLite rejects a non-constant DEFAULT in ALTER TABLE,
+// so add it nullable and backfill existing rows from created_at.
+if (!hasCol('orders', 'updated_at')) {
+  db.exec('ALTER TABLE orders ADD COLUMN updated_at TEXT');
+  db.exec('UPDATE orders SET updated_at = created_at WHERE updated_at IS NULL');
+}
 
 // migrate legacy single shipping label per item into the multi-label table
 db.exec(`

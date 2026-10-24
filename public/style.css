@@ -339,3 +339,7 @@ body.auth {
   .search { width:100%; }
   .search input[type=search] { width:auto; flex:1; }
 }
+
+/* ---- timestamps -------------------------------------------------------- */
+.ts-cell { white-space:nowrap; font-size:12px; color:var(--muted); }
+.ts { font-variant-numeric:tabular-nums; }

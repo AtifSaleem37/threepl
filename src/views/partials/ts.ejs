@@ -1,0 +1,7 @@
+<%#
+  One timestamp cell. Values are stored as UTC "YYYY-MM-DD HH:MM:SS"; the
+  datetime attribute carries the ISO form so partials/localtime.ejs can
+  rewrite the text into the viewer's own timezone. Without JS the UTC
+  value stays visible rather than showing nothing.
+-%>
+<% if (value) { %><time class="ts" datetime="<%= String(value).replace(' ', 'T') %>Z"><%= String(value).slice(0, 16) %> UTC</time><% } else { %>-<% } %>

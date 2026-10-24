@@ -87,6 +87,13 @@ function notify(role, message, clientId = null) {
     SELECT id FROM notifications WHERE role=? AND client_id IS ? ORDER BY id DESC LIMIT 5)`)
     .run(role, clientId, role, clientId);
 }
+// Every portal lists orders by most-recent activity. COALESCE guards rows from
+// before updated_at existed, in case any escaped the backfill.
+const RECENT_FIRST = 'ORDER BY COALESCE(o.updated_at, o.created_at) DESC, o.id DESC';
+// Bump an order's last-activity stamp for changes that live in a child table
+// (labels, shipment info); direct UPDATEs on orders set updated_at inline.
+const touchOrder = id => db.prepare("UPDATE orders SET updated_at=datetime('now') WHERE id=?").run(id);
+
 // Order-lifecycle actions are emailed to the operations mailbox; 'tracking' and
 // 'payment' copy their own recipients too (see mailer.js). Fire-and-forget by
 // design: a mail failure is logged and never blocks the action that caused it.
@@ -166,7 +173,7 @@ app.get('/admin', (req, res, next) => {
     SELECT o.*, u.client_name AS account_name
     FROM orders o JOIN users u ON u.id = o.client_id
     WHERE 1=1${f.clause}
-    ORDER BY o.id DESC`).all(...f.params);
+    ${RECENT_FIRST}`).all(...f.params);
   const clients = db.prepare(`
     SELECT u.*, r.inbound AS o_inbound, r.fnsku AS o_fnsku, r.polybag AS o_polybag,
            r.carton AS o_carton, r.discount_pct AS o_discount
@@ -257,8 +264,7 @@ app.get('/warehouse', (req, res, next) => {
       ${missingSlabelsSql} AS missing_slabels
     FROM orders o
     WHERE o.shipment_status IN ${WH_STATUSES}${f.clause}
-    ORDER BY CASE o.shipment_status WHEN 'shipped' THEN 0 WHEN 'received' THEN 1 WHEN 'prep' THEN 2 WHEN 'prep_done' THEN 3 ELSE 4 END, o.id DESC`)
-    .all(...f.params);
+    ${RECENT_FIRST}`).all(...f.params);
   const itemsByOrder = {}, labelsByItem = {};
   for (const it of db.prepare(`
     SELECT i.* FROM order_items i JOIN orders o ON o.id = i.order_id
@@ -287,7 +293,7 @@ function whTransition(from, to, doneMsg) {
   return (req, res) => {
     const order = db.prepare(`SELECT * FROM orders WHERE id=? AND shipment_status=?`).get(req.params.id, from);
     if (!order) return res.redirect('/warehouse?err=' + encodeURIComponent(`Order is not in "${SHIP_LABELS[from]}" state`));
-    db.prepare('UPDATE orders SET shipment_status=? WHERE id=?').run(to, order.id);
+    db.prepare("UPDATE orders SET shipment_status=?, updated_at=datetime('now') WHERE id=?").run(to, order.id);
     notify('client', `${order.invoice_no}: ${doneMsg}`, order.client_id);
     if (to === 'received') notify('admin', `${order.invoice_no}: received by warehouse`);
     emailEvent({ ...order, shipment_status: to }, `Warehouse: ${SHIP_LABELS[to]}`,
@@ -310,7 +316,7 @@ app.post('/warehouse/orders/:id/sent-to-amazon', requireWarehouse, (req, res) =>
   if (order.missing_info > 0 || order.missing_slabels > 0) {
     return res.redirect('/warehouse?err=' + encodeURIComponent('Every ASIN needs shipment info and at least one shipping label first'));
   }
-  db.prepare("UPDATE orders SET shipment_status='sent_to_amazon' WHERE id=?").run(order.id);
+  db.prepare("UPDATE orders SET shipment_status='sent_to_amazon', updated_at=datetime('now') WHERE id=?").run(order.id);
   notify('client', `${order.invoice_no}: shipment sent to Amazon`, order.client_id);
   notify('admin', `${order.invoice_no}: sent to Amazon by warehouse`);
   emailEvent(order, 'Shipment sent to Amazon',
@@ -331,6 +337,7 @@ app.post('/warehouse/orders/:id/ship-info', requireWarehouse, (req, res) => {
     saved += r.changes;
   }
   if (!saved) return res.redirect('/warehouse?err=' + encodeURIComponent('No shipment info entered'));
+  touchOrder(order.id);
   const missing = db.prepare('SELECT COUNT(*) c FROM order_items WHERE order_id=? AND ship_info IS NULL').get(order.id).c;
   if (missing === 0) {
     notify('client', `${order.invoice_no}: shipment info added - please upload shipping labels for each ASIN`, order.client_id);
@@ -353,8 +360,7 @@ app.get('/accounts', (req, res, next) => {
     SELECT o.*, u.client_name AS account_name
     FROM orders o JOIN users u ON u.id = o.client_id
     WHERE 1=1${f.clause}
-    ORDER BY CASE o.payment_status WHEN 'verification' THEN 0 WHEN 'unpaid' THEN 1 ELSE 2 END, o.id DESC`)
-    .all(...f.params);
+    ${RECENT_FIRST}`).all(...f.params);
   res.render('accounts', {
     user: req.session.accounts, orders, q,
     payLabels: PAY_LABELS,
@@ -369,7 +375,7 @@ app.get('/accounts', (req, res, next) => {
 app.post('/accounts/orders/:id/verify', requireAccounts, (req, res) => {
   const order = db.prepare("SELECT * FROM orders WHERE id=? AND payment_status='verification'").get(req.params.id);
   if (!order) return res.redirect('/accounts?err=' + encodeURIComponent('Order is not awaiting verification'));
-  db.prepare("UPDATE orders SET payment_status='paid' WHERE id=?").run(order.id);
+  db.prepare("UPDATE orders SET payment_status='paid', updated_at=datetime('now') WHERE id=?").run(order.id);
   notify('client', `${order.invoice_no}: payment verified - shipment details unlocked`, order.client_id);
   notify('admin', `${order.invoice_no}: payment verified by accounts`);
   emailEvent({ ...order, payment_status: 'paid' }, 'Payment verified',
@@ -382,7 +388,7 @@ app.post('/accounts/orders/:id/verify', requireAccounts, (req, res) => {
 app.post('/accounts/orders/:id/reject', requireAccounts, (req, res) => {
   const order = db.prepare("SELECT * FROM orders WHERE id=? AND payment_status='verification'").get(req.params.id);
   if (!order) return res.redirect('/accounts?err=' + encodeURIComponent('Order is not awaiting verification'));
-  db.prepare("UPDATE orders SET payment_status='unpaid' WHERE id=?").run(order.id);
+  db.prepare("UPDATE orders SET payment_status='unpaid', updated_at=datetime('now') WHERE id=?").run(order.id);
   notify('client', `${order.invoice_no}: payment not received - invoice set back to unpaid`, order.client_id);
   emailEvent({ ...order, payment_status: 'unpaid' }, 'Payment NOT received',
     `Accounts (${req.session.accounts.username}) marked the payment as not received. The invoice is back to Unpaid.`,
@@ -403,7 +409,7 @@ app.get('/clients', (req, res, next) => {
       (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.fnsku_file IS NULL) AS missing_labels,
       (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.ship_info IS NULL) AS missing_info,
       ${missingSlabelsSql} AS missing_slabels
-    FROM orders o WHERE o.client_id=?${f.clause} ORDER BY o.id DESC`).all(me.id, ...f.params);
+    FROM orders o WHERE o.client_id=?${f.clause} ${RECENT_FIRST}`).all(me.id, ...f.params);
   // FNSKU modal: ?fnsku=<orderId> / shipping-label modal: ?shiplabel=<orderId>
   let fnskuOrder = null, fnskuItems = [], shipLabelOrder = null, shipLabelItems = [];
   if (req.query.fnsku) {
@@ -447,7 +453,8 @@ app.post('/clients/orders/:id/payment-sent', requireClient, (req, res) => {
     const finalName = `order${order.id}-payment${PROOF_TYPES[req.file.mimetype]}`;
     fs.renameSync(req.file.path, path.join(PAYMENT_DIR, finalName));
     db.prepare(`UPDATE orders SET payment_status='verification', payment_proof=?,
-                payment_proof_uploaded_at=datetime('now') WHERE id=?`).run(finalName, order.id);
+                payment_proof_uploaded_at=datetime('now'), updated_at=datetime('now')
+                WHERE id=?`).run(finalName, order.id);
 
     notify('accounts', `${order.invoice_no}: client marked payment sent (proof attached) - please verify`);
     notify('admin', `${order.invoice_no}: payment marked sent by ${order.business_name}`);
@@ -526,6 +533,7 @@ app.post('/clients/orders', requireClient, async (req, res) => {
   const insertItem = db.prepare('INSERT INTO order_items (order_id, asin, quantity, polybag, polybag_type) VALUES (?,?,?,?,?)');
   for (const i of items) insertItem.run(info.lastInsertRowid, i.asin, i.quantity, i.polybag, i.polybag_type);
 
+  touchOrder(info.lastInsertRowid);
   const order = db.prepare('SELECT * FROM orders WHERE id=?').get(info.lastInsertRowid);
   notify('admin', `New order ${invoice_no} from ${order.business_name} (${quantity} units, $${total.toFixed(2)})`);
   notify('accounts', `New invoice ${invoice_no} for ${order.business_name} ($${total.toFixed(2)})`);
@@ -559,7 +567,7 @@ app.post('/clients/orders/:id/shipment', requireClient, (req, res) => {
     }
   }
   const status = CLIENT_SHIP_STATUSES.includes(req.body.shipment_status) ? req.body.shipment_status : order.shipment_status;
-  db.prepare('UPDATE orders SET shipment_status=?, carrier=?, tracking_id=? WHERE id=?')
+  db.prepare("UPDATE orders SET shipment_status=?, carrier=?, tracking_id=?, updated_at=datetime('now') WHERE id=?")
     .run(status, req.body.carrier || null, req.body.tracking_id || null, order.id);
   if (status === 'shipped' && order.shipment_status !== 'shipped') {
     notify('warehouse', `${order.invoice_no}: marked shipped by ${order.business_name} (${req.body.carrier || '-'} / ${req.body.tracking_id || '-'})`);
@@ -611,6 +619,7 @@ app.post('/clients/orders/:id/fnsku', requireClient, (req, res) => {
       saved++;
     }
     if (!saved) return res.redirect(`/clients?fnsku=${order.id}&err=` + encodeURIComponent('No PDF files were uploaded'));
+    touchOrder(order.id);
     const remaining = db.prepare('SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL').get(order.id).c;
     if (remaining === 0) notify('warehouse', `${order.invoice_no}: all FNSKU labels uploaded`);
     emailEvent(order, 'FNSKU labels uploaded',
@@ -641,6 +650,7 @@ app.post('/clients/orders/:id/shipping-labels', requireClient, (req, res) => {
       saved++;
     }
     if (!saved) return res.redirect(`/clients?shiplabel=${order.id}&err=` + encodeURIComponent('No PDF files were uploaded'));
+    touchOrder(order.id);
     const remaining = db.prepare(`
       SELECT COUNT(*) c FROM order_items i WHERE i.order_id=?
         AND NOT EXISTS (SELECT 1 FROM shipping_labels l WHERE l.item_id = i.id)`).get(order.id).c;
