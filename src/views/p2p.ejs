@@ -10,9 +10,15 @@
       logoutAction: '/p2p/logout', logoutLabel: 'Log out (' + user.username + ')'
     }) %>
 <main>
+  <nav class="tabs">
+    <a href="/p2p" class="<%= tab === 'orders' ? 'active' : '' %>">Purchase Orders</a>
+    <a href="/p2p?tab=warehouse" class="<%= tab === 'warehouse' ? 'active' : '' %>">Warehouse Status</a>
+  </nav>
+
   <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
   <% if (err) { %><div class="flash err"><%= err %></div><% } %>
 
+  <% if (tab === 'orders') { %>
   <div class="card">
     <div class="card-head">
       <h2>Purchase Orders</h2>
@@ -42,6 +48,9 @@
           <td>
             <span class="badge <%= po.status %>"><%= poLabels[po.status] %></span>
             <div class="by-line">by <%= (eventsByPo[po.id] || []).slice(-1)[0] ? eventsByPo[po.id].slice(-1)[0].user_name : po.created_by_name %></div>
+            <% if (po.pallets_sent > 0) { %>
+              <div class="by-line"><%= po.pallets_sent %> of <%= po.pallets %> pallet(s) sent</div>
+            <% } %>
           </td>
           <td>
             <% if (po.tracking_id) { %>
@@ -81,6 +90,12 @@
                   <input name="tracking_id" placeholder="Tracking ID" required>
                   <input name="pallets" type="number" min="1" placeholder="Pallets" required>
                 <% } %>
+                <% if (next === 'sent_to_amazon') { %>
+                  <label for="sent-<%= po.id %>">Pallets to send *</label>
+                  <input name="pallets_sent" id="sent-<%= po.id %>" type="number" min="1"
+                         max="<%= (po.pallets || 0) - (po.pallets_sent || 0) %>"
+                         placeholder="of <%= (po.pallets || 0) - (po.pallets_sent || 0) %> left" required>
+                <% } %>
                 <% if (poPhotoRequired.includes(next)) { %>
                   <label for="photo-<%= po.id %>">Photo *</label>
                   <input type="file" id="photo-<%= po.id %>" name="photo"
@@ -101,8 +116,15 @@
     </div>
     <p><small class="hint">Pipeline: PO placed &rarr; Shipped &rarr; Received &rarr; Prep in progress &rarr; Sent to Amazon.
       Every change records who made it. A photo is required for <strong>Received</strong> and
-      <strong>Sent to Amazon</strong>; Shipped needs carrier, tracking ID and pallet count.</small></p>
+      <strong>Sent to Amazon</strong>; Shipped needs carrier, tracking ID and pallet count.
+      Sending fewer pallets than were received leaves the PO <strong>Partially sent to Amazon</strong>,
+      ready for the rest.</small></p>
   </div>
+  <% } %>
+
+  <% if (tab === 'warehouse') { %>
+  <%- include('partials/warehouse-chart') %>
+  <% } %>
 </main>
 
 <dialog id="newPoModal">

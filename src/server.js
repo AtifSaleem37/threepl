@@ -136,13 +136,65 @@ const PORTALS = {
 // ---- P2P purchase orders ----
 const PO_LABELS = {
   po_placed: 'PO placed', shipped: 'Shipped', received: 'Received',
-  prep: 'Prep in progress', sent_to_amazon: 'Sent to Amazon'
+  prep: 'Prep in progress', partial_sent: 'Partially sent to Amazon',
+  sent_to_amazon: 'Sent to Amazon'
 };
-// Linear pipeline; a PO only ever moves to its single next state.
-const PO_NEXT = { po_placed: 'shipped', shipped: 'received', received: 'prep', prep: 'sent_to_amazon' };
+// Linear pipeline. partial_sent loops back on itself: despatching is repeatable
+// until the running total reaches the pallet count, which closes the PO.
+const PO_NEXT = {
+  po_placed: 'shipped', shipped: 'received', received: 'prep',
+  prep: 'sent_to_amazon', partial_sent: 'sent_to_amazon'
+};
+// Pallets the warehouse can hold. Advisory: occupancy is reported, never enforced.
+const WAREHOUSE_CAPACITY = parseInt(process.env.WAREHOUSE_CAPACITY || '50', 10);
+
+// Occupancy snapshot for the Warehouse Status tab.
+//   on the floor = pallets received but not yet despatched
+//   in transit   = pallets on POs marked shipped but not yet received
+function warehouseStatus() {
+  const onFloor = db.prepare(`
+    SELECT COALESCE(SUM(MAX(COALESCE(pallets,0) - pallets_sent, 0)), 0) AS n,
+           COUNT(*) AS pos
+    FROM purchase_orders WHERE status IN ('received','prep','partial_sent')`).get();
+  const transit = db.prepare(`
+    SELECT COALESCE(SUM(COALESCE(pallets,0)), 0) AS n, COUNT(*) AS pos
+    FROM purchase_orders WHERE status='shipped'`).get();
+
+  const inWarehouse = onFloor.n, inTransit = transit.n;
+  const committed = inWarehouse + inTransit;
+  const free = Math.max(0, WAREHOUSE_CAPACITY - committed);
+  // Over capacity, the ring shows the share of what is committed rather than of 50.
+  const total = Math.max(WAREHOUSE_CAPACITY, committed) || 1;
+
+  const segments = [
+    { key: 'warehouse', label: 'In warehouse', value: inWarehouse, color: '#2a78d6' },
+    { key: 'transit', label: 'In transit', value: inTransit, color: '#eb6834' },
+    { key: 'free', label: 'Free space', value: free, color: '#e4e9f2' }
+  ];
+  // Ring geometry is computed here so the template stays declarative.
+  const R = 70, C = 2 * Math.PI * R;
+  const drawn = segments.filter(s => s.value > 0);
+  const GAP = drawn.length > 1 ? 3 : 0;
+  let acc = 0;
+  const arcs = drawn.map(seg => {
+    const frac = seg.value / total;
+    const len = Math.max(0, frac * C - GAP);
+    const arc = { ...seg, len, rest: C - len, offset: -acc * C, pct: Math.round(frac * 100) };
+    acc += frac;
+    return arc;
+  });
+
+  return {
+    capacity: WAREHOUSE_CAPACITY, inWarehouse, inTransit, committed, free, total,
+    posOnFloor: onFloor.pos, posInTransit: transit.pos,
+    segments, arcs, radius: R, circumference: C,
+    over: Math.max(0, inWarehouse - WAREHOUSE_CAPACITY),
+    overCommitted: Math.max(0, committed - WAREHOUSE_CAPACITY)
+  };
+}
 // A photo is only demanded on arrival at the warehouse and on despatch to
 // Amazon. The two steps in between take one if offered but do not require it.
-const PO_PHOTO_REQUIRED = ['received', 'sent_to_amazon'];
+const PO_PHOTO_REQUIRED = ['received', 'sent_to_amazon'];   // partial sends included - they advance via 'sent_to_amazon'
 // "PO placed by Ahmed" - first name only, as asked.
 const firstNameOf = u => String(u.client_name || u.username || '').trim().split(/\s+/)[0] || u.username;
 
@@ -425,7 +477,9 @@ app.get('/p2p', (req, res, next) => {
   res.render('p2p', {
     user: req.session.p2p, pos, eventsByPo, q,
     poLabels: PO_LABELS, poNext: PO_NEXT, poPhotoRequired: PO_PHOTO_REQUIRED,
+    wh: warehouseStatus(),
     notifs: getNotifs('p2p'),
+    tab: req.query.tab === 'warehouse' ? 'warehouse' : 'orders',
     openNew: req.query.new === '1',
     msg: req.query.msg || null,
     err: req.query.err || null
@@ -481,6 +535,25 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
     }
 
     let detail = '';
+    let landedStatus = next;
+    if (next === 'sent_to_amazon') {
+      const sending = parseInt(req.body.pallets_sent, 10);
+      const total = po.pallets || 0;
+      const already = po.pallets_sent || 0;
+      const remaining = Math.max(0, total - already);
+      if (!Number.isFinite(sending) || sending < 1) {
+        return fail('Enter how many pallets are being sent to Amazon');
+      }
+      if (sending > remaining) {
+        return fail(`${po.po_number} has only ${remaining} pallet(s) left to send`);
+      }
+      const nowSent = already + sending;
+      // Short of the received count means the PO stays open for a further send.
+      landedStatus = nowSent >= total ? 'sent_to_amazon' : 'partial_sent';
+      db.prepare('UPDATE purchase_orders SET pallets_sent=? WHERE id=?').run(nowSent, po.id);
+      detail = `${sending} pallet(s) sent - ${nowSent} of ${total} total` +
+        (landedStatus === 'partial_sent' ? ` (${total - nowSent} still in the warehouse)` : '');
+    }
     if (next === 'shipped') {
       const carrier = (req.body.carrier || '').trim();
       const tracking_id = (req.body.tracking_id || '').trim();
@@ -497,15 +570,16 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
     const who = firstNameOf(me);
     let photoName = null;
     if (req.file) {
-      photoName = `po${po.id}-${next}-${Date.now()}${PHOTO_TYPES[req.file.mimetype]}`;
+      photoName = `po${po.id}-${landedStatus}-${Date.now()}${PHOTO_TYPES[req.file.mimetype]}`;
       fs.renameSync(req.file.path, path.join(PO_PHOTO_DIR, photoName));
     }
 
-    db.prepare("UPDATE purchase_orders SET status=?, updated_at=datetime('now') WHERE id=?").run(next, po.id);
+    db.prepare("UPDATE purchase_orders SET status=?, updated_at=datetime('now') WHERE id=?")
+      .run(landedStatus, po.id);
     db.prepare('INSERT INTO po_events (po_id, status, photo, detail, user_id, user_name) VALUES (?,?,?,?,?,?)')
-      .run(po.id, next, photoName, detail || null, me.id, who);
-    notify('p2p', `${po.po_number}: ${PO_LABELS[next]} by ${who}`);
-    res.redirect('/p2p?msg=' + encodeURIComponent(`${po.po_number} - ${PO_LABELS[next]} by ${who}`));
+      .run(po.id, landedStatus, photoName, detail || null, me.id, who);
+    notify('p2p', `${po.po_number}: ${PO_LABELS[landedStatus]} by ${who}`);
+    res.redirect('/p2p?msg=' + encodeURIComponent(`${po.po_number} - ${PO_LABELS[landedStatus]} by ${who}`));
   });
 });
 

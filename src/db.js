@@ -101,10 +101,11 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   product_name TEXT NOT NULL,
   quantity INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'po_placed'
-    CHECK (status IN ('po_placed','shipped','received','prep','sent_to_amazon')),
+    CHECK (status IN ('po_placed','shipped','received','prep','partial_sent','sent_to_amazon')),
   carrier TEXT,
   tracking_id TEXT,
   pallets INTEGER,
+  pallets_sent INTEGER NOT NULL DEFAULT 0,
   created_by INTEGER REFERENCES users(id),
   created_by_name TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -165,7 +166,7 @@ function migrate(name, createSql) {
 
 // clean up any leftovers from previously interrupted migrations
 db.exec('PRAGMA foreign_keys = OFF');
-db.exec('DROP TABLE IF EXISTS users_old; DROP TABLE IF EXISTS orders_old;');
+db.exec('DROP TABLE IF EXISTS users_old; DROP TABLE IF EXISTS orders_old; DROP TABLE IF EXISTS purchase_orders_old;');
 db.exec('PRAGMA foreign_keys = ON');
 
 if (tableSql('users') && !tableSql('users').includes("'warehouse'")) {
@@ -224,6 +225,56 @@ if (!hasCol('order_items', 'shipping_label_uploaded_at')) db.exec('ALTER TABLE o
 // proof-of-payment screenshot the client attaches when marking payment sent
 if (!hasCol('orders', 'payment_proof')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof TEXT');
 if (!hasCol('orders', 'payment_proof_uploaded_at')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof_uploaded_at TEXT');
+// Running total of pallets already despatched to Amazon, for partial sends.
+if (!hasCol('purchase_orders', 'pallets_sent')) {
+  db.exec('ALTER TABLE purchase_orders ADD COLUMN pallets_sent INTEGER NOT NULL DEFAULT 0');
+}
+// Widening a CHECK needs a table rebuild. ALTER appended pallets_sent at the end,
+// so the column list below is explicit rather than SELECT * - the two orders differ.
+if (tableSql('purchase_orders') && !tableSql('purchase_orders').includes("'partial_sent'")) {
+  const COLS = `id, po_number, store_name, brand, asin, product_name, quantity, status,
+                carrier, tracking_id, pallets, created_by, created_by_name,
+                created_at, updated_at, pallets_sent`;
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('PRAGMA legacy_alter_table = 1');
+  try {
+    db.exec(`
+      BEGIN;
+      DROP TABLE IF EXISTS purchase_orders_old;
+      ALTER TABLE purchase_orders RENAME TO purchase_orders_old;
+      CREATE TABLE purchase_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_number TEXT NOT NULL,
+        store_name TEXT NOT NULL,
+        brand TEXT NOT NULL,
+        asin TEXT NOT NULL,
+        product_name TEXT NOT NULL,
+        quantity INTEGER NOT NULL,
+        status TEXT NOT NULL DEFAULT 'po_placed'
+          CHECK (status IN ('po_placed','shipped','received','prep','partial_sent','sent_to_amazon')),
+        carrier TEXT,
+        tracking_id TEXT,
+        pallets INTEGER,
+        created_by INTEGER REFERENCES users(id),
+        created_by_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        pallets_sent INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO purchase_orders (${COLS}) SELECT ${COLS} FROM purchase_orders_old;
+      DROP TABLE purchase_orders_old;
+      COMMIT;
+    `);
+    console.log('Migrated purchase_orders table');
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw e;
+  } finally {
+    db.exec('PRAGMA legacy_alter_table = 0');
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 // last-activity timestamp; SQLite rejects a non-constant DEFAULT in ALTER TABLE,
 // so add it nullable and backfill existing rows from created_at.
 if (!hasCol('orders', 'updated_at')) {

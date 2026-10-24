@@ -1,0 +1,89 @@
+<%#
+  Warehouse capacity ring. Geometry comes from warehouseStatus() in server.js, so
+  this template only draws. Two categorical hues (validated: CVD dE 24.7 / normal
+  33.6 on white) carry the two real categories; free space is a neutral track, not
+  a third category. Segments are separated by a 3px gap rather than a stroke.
+-%>
+<div class="card">
+  <div class="card-head">
+    <h2>Warehouse Status</h2>
+    <span class="cap-note">Capacity <strong><%= wh.capacity %></strong> pallets</span>
+  </div>
+
+  <% if (wh.over > 0) { %>
+    <div class="flash err">Over capacity: <%= wh.inWarehouse %> pallets on the floor,
+      <%= wh.over %> above the <%= wh.capacity %>-pallet limit.</div>
+  <% } else if (wh.overCommitted > 0) { %>
+    <div class="flash err">Committed pallets (<%= wh.committed %>) exceed the
+      <%= wh.capacity %>-pallet capacity by <%= wh.overCommitted %> once everything in transit lands.</div>
+  <% } %>
+
+  <div class="wh-grid">
+    <figure class="wh-ring">
+      <svg viewBox="0 0 200 200" role="img" width="200" height="200"
+           aria-label="Warehouse capacity: <%= wh.inWarehouse %> pallets in warehouse, <%= wh.inTransit %> in transit, <%= wh.free %> free of <%= wh.capacity %>">
+        <g transform="rotate(-90 100 100)">
+          <% wh.arcs.forEach(a => { %>
+            <circle cx="100" cy="100" r="<%= wh.radius %>"
+                    fill="none" stroke="<%= a.color %>" stroke-width="22"
+                    stroke-dasharray="<%= a.len.toFixed(2) %> <%= a.rest.toFixed(2) %>"
+                    stroke-dashoffset="<%= a.offset.toFixed(2) %>">
+              <title><%= a.label %>: <%= a.value %> pallet(s)</title>
+            </circle>
+          <% }) %>
+        </g>
+        <text x="100" y="94" text-anchor="middle" class="ring-hero"><%= wh.inWarehouse %></text>
+        <text x="100" y="114" text-anchor="middle" class="ring-sub">of <%= wh.capacity %> pallets</text>
+        <text x="100" y="130" text-anchor="middle" class="ring-sub2">in warehouse</text>
+      </svg>
+    </figure>
+
+    <div class="wh-side">
+      <ul class="wh-legend">
+        <% wh.segments.forEach(seg => { %>
+          <li>
+            <span class="swatch" style="background:<%= seg.color %>"></span>
+            <span class="legend-label"><%= seg.label %></span>
+            <span class="legend-value"><%= seg.value %></span>
+          </li>
+        <% }) %>
+      </ul>
+
+      <div class="wh-stats">
+        <div class="stat">
+          <span class="stat-value"><%= wh.posOnFloor %></span>
+          <span class="stat-label">PO<%= wh.posOnFloor === 1 ? '' : 's' %> in warehouse</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value"><%= wh.posInTransit %></span>
+          <span class="stat-label">PO<%= wh.posInTransit === 1 ? '' : 's' %> in transit</span>
+        </div>
+        <div class="stat">
+          <span class="stat-value"><%= wh.committed %></span>
+          <span class="stat-label">Pallets committed</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <details class="wh-table">
+    <summary>View as table</summary>
+    <div class="table-wrap">
+      <table>
+        <tr><th>Measure</th><th>Pallets</th><th>Share of <%= wh.total %></th></tr>
+        <% wh.segments.forEach(seg => { %>
+          <tr>
+            <td><span class="swatch" style="background:<%= seg.color %>"></span> <%= seg.label %></td>
+            <td><%= seg.value %></td>
+            <td><%= wh.total ? Math.round(seg.value / wh.total * 100) : 0 %>%</td>
+          </tr>
+        <% }) %>
+        <tr><td><strong>Capacity</strong></td><td><strong><%= wh.capacity %></strong></td><td>&mdash;</td></tr>
+      </table>
+    </div>
+  </details>
+
+  <p><small class="hint"><strong>In warehouse</strong> counts pallets received but not yet sent to Amazon,
+    so a partially sent PO still occupies the remainder. <strong>In transit</strong> counts pallets on POs
+    marked Shipped that have not arrived yet. Capacity is advisory &mdash; receiving is never blocked.</small></p>
+</div>
