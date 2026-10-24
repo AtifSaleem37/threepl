@@ -145,6 +145,16 @@ const PO_NEXT = {
   po_placed: 'shipped', shipped: 'received', received: 'prep',
   prep: 'sent_to_amazon', partial_sent: 'sent_to_amazon'
 };
+// Strict whole-number parse for pallet counts. parseInt is unusable here: it
+// silently truncates "3.7" to 3, reads "1e3" as 1 and "5abc" as 5. Leading zeros
+// and surrounding whitespace are fine; signs, decimals and trailing text are not.
+function wholeNumber(v) {
+  const str = String(v == null ? '' : v).trim();
+  if (!/^\d+$/.test(str)) return null;
+  const n = Number(str);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
+
 // Pallets the warehouse can hold. Advisory: occupancy is reported, never enforced.
 const WAREHOUSE_CAPACITY = parseInt(process.env.WAREHOUSE_CAPACITY || '50', 10);
 
@@ -537,12 +547,12 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
     let detail = '';
     let landedStatus = next;
     if (next === 'sent_to_amazon') {
-      const sending = parseInt(req.body.pallets_sent, 10);
+      const sending = wholeNumber(req.body.pallets_sent);
       const total = po.pallets || 0;
       const already = po.pallets_sent || 0;
       const remaining = Math.max(0, total - already);
-      if (!Number.isFinite(sending) || sending < 1) {
-        return fail('Enter how many pallets are being sent to Amazon');
+      if (sending === null) {
+        return fail('Pallets sent must be a whole number greater than zero - no decimals or negatives');
       }
       if (sending > remaining) {
         return fail(`${po.po_number} has only ${remaining} pallet(s) left to send`);
@@ -557,9 +567,12 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
     if (next === 'shipped') {
       const carrier = (req.body.carrier || '').trim();
       const tracking_id = (req.body.tracking_id || '').trim();
-      const pallets = parseInt(req.body.pallets, 10);
-      if (!carrier || !tracking_id || !Number.isFinite(pallets) || pallets < 1) {
-        return fail('Carrier, tracking ID and number of pallets are all required to mark a PO shipped');
+      const pallets = wholeNumber(req.body.pallets);
+      if (!carrier || !tracking_id) {
+        return fail('Carrier and tracking ID are both required to mark a PO shipped');
+      }
+      if (pallets === null) {
+        return fail('Number of pallets must be a whole number greater than zero - no decimals or negatives');
       }
       db.prepare('UPDATE purchase_orders SET carrier=?, tracking_id=?, pallets=? WHERE id=?')
         .run(carrier, tracking_id, pallets, po.id);

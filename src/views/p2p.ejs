@@ -88,12 +88,15 @@
                 <% if (next === 'shipped') { %>
                   <input name="carrier" placeholder="Carrier" required>
                   <input name="tracking_id" placeholder="Tracking ID" required>
-                  <input name="pallets" type="number" min="1" placeholder="Pallets" required>
+                  <input name="pallets" type="number" min="1" step="1" inputmode="numeric"
+                         pattern="\d+" placeholder="Pallets" title="Whole pallets, 1 or more" required>
                 <% } %>
                 <% if (next === 'sent_to_amazon') { %>
                   <label for="sent-<%= po.id %>">Pallets to send *</label>
-                  <input name="pallets_sent" id="sent-<%= po.id %>" type="number" min="1"
+                  <input name="pallets_sent" id="sent-<%= po.id %>" type="number" min="1" step="1"
+                         inputmode="numeric" pattern="\d+"
                          max="<%= (po.pallets || 0) - (po.pallets_sent || 0) %>"
+                         title="Whole pallets, 1 or more"
                          placeholder="of <%= (po.pallets || 0) - (po.pallets_sent || 0) %> left" required>
                 <% } %>
                 <% if (poPhotoRequired.includes(next)) { %>
