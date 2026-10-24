@@ -8,6 +8,7 @@ fs.mkdirSync(DATA_DIR, { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'invoices'), { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'fnsku'), { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, 'payments'), { recursive: true });
+fs.mkdirSync(path.join(DATA_DIR, 'po-photos'), { recursive: true });
 
 const db = new DatabaseSync(path.join(DATA_DIR, 'portal.db'));
 try { db.exec('PRAGMA journal_mode = WAL'); } catch { /* fs without WAL support */ }
@@ -15,7 +16,7 @@ try { db.exec('PRAGMA journal_mode = WAL'); } catch { /* fs without WAL support 
 db.exec(`
 CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
-  role TEXT NOT NULL CHECK (role IN ('admin','client','accounts','warehouse')),
+  role TEXT NOT NULL CHECK (role IN ('admin','client','accounts','warehouse','p2p')),
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   client_name TEXT,
@@ -90,6 +91,39 @@ CREATE TABLE IF NOT EXISTS shipping_labels (
   uploaded_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- P2P purchase orders. Shared queue: every p2p user sees and can action all of them.
+CREATE TABLE IF NOT EXISTS purchase_orders (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_number TEXT NOT NULL,
+  store_name TEXT NOT NULL,
+  brand TEXT NOT NULL,
+  asin TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  quantity INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'po_placed'
+    CHECK (status IN ('po_placed','shipped','received','prep','sent_to_amazon')),
+  carrier TEXT,
+  tracking_id TEXT,
+  pallets INTEGER,
+  created_by INTEGER REFERENCES users(id),
+  created_by_name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- One row per state the PO has been in, including its creation. This is the
+-- audit trail shown in the portal: who moved it, when, and the photo they filed.
+CREATE TABLE IF NOT EXISTS po_events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  status TEXT NOT NULL,
+  photo TEXT,
+  detail TEXT,
+  user_id INTEGER REFERENCES users(id),
+  user_name TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS notifications (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   role TEXT NOT NULL,                       -- target portal: admin|client|accounts|warehouse
@@ -138,7 +172,19 @@ if (tableSql('users') && !tableSql('users').includes("'warehouse'")) {
   migrate('users', `
     CREATE TABLE users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      role TEXT NOT NULL CHECK (role IN ('admin','client','accounts','warehouse')),
+      role TEXT NOT NULL CHECK (role IN ('admin','client','accounts','warehouse','p2p')),
+      username TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      client_name TEXT, business_name TEXT, email TEXT, store_name TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    )`);
+}
+
+if (tableSql('users') && !tableSql('users').includes("'p2p'")) {
+  migrate('users', `
+    CREATE TABLE users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      role TEXT NOT NULL CHECK (role IN ('admin','client','accounts','warehouse','p2p')),
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
       client_name TEXT, business_name TEXT, email TEXT, store_name TEXT,

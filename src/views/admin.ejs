@@ -81,13 +81,14 @@
   <% if (tab === 'staff') { %>
   <div class="card">
     <h2>Create Staff User</h2>
-    <p><small class="hint">Accounts users verify client payments at /accounts. Warehouse users receive shipments and download FNSKU labels at /warehouse. Only name, username and password are needed.</small></p>
+    <p><small class="hint">Accounts users verify client payments at /accounts. Warehouse users receive shipments and download FNSKU labels at /warehouse. P2P users manage purchase orders at /p2p. Only name, username and password are needed.</small></p>
     <form method="post" action="/admin/clients">
       <div class="grid cols-2">
         <div><label>Role *</label>
           <select name="role">
             <option value="accounts">Accounts (payment verification)</option>
             <option value="warehouse">Warehouse (receiving)</option>
+            <option value="p2p">P2P (purchase orders)</option>
           </select>
         </div>
         <div><label>Name *</label><input name="client_name" required></div>

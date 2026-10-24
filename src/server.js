@@ -19,8 +19,10 @@ const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', 'data');
 const FNSKU_DIR = path.join(DATA_DIR, 'fnsku');
 const SHIPLABEL_DIR = path.join(DATA_DIR, 'shiplabels');
 const PAYMENT_DIR = path.join(DATA_DIR, 'payments');
+const PO_PHOTO_DIR = path.join(DATA_DIR, 'po-photos');
 fs.mkdirSync(SHIPLABEL_DIR, { recursive: true });
 fs.mkdirSync(PAYMENT_DIR, { recursive: true });
+fs.mkdirSync(PO_PHOTO_DIR, { recursive: true });
 const fnskuUpload = multer({
   storage: multer.diskStorage({
     destination: FNSKU_DIR,
@@ -44,6 +46,19 @@ const proofUpload = multer({
     const ok = !!PROOF_TYPES[file.mimetype] &&
       /\.(jpe?g|png|webp|pdf)$/i.test(file.originalname);
     cb(ok ? null : new Error('Payment proof must be a JPG, PNG, WEBP or PDF file'), ok);
+  }
+});
+// Photo filed with every P2P status change.
+const PHOTO_TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/heic': '.heic' };
+const poPhotoUpload = multer({
+  storage: multer.diskStorage({
+    destination: PO_PHOTO_DIR,
+    filename: (req, file, cb) => cb(null, `tmp-${Date.now()}-${Math.round(Math.random() * 1e9)}`)
+  }),
+  limits: { fileSize: 15 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const ok = !!PHOTO_TYPES[file.mimetype] && /\.(jpe?g|png|webp|heic)$/i.test(file.originalname);
+    cb(ok ? null : new Error('Photo must be a JPG, PNG, WEBP or HEIC image'), ok);
   }
 });
 app.use(express.static(path.join(__dirname, '..', 'public')));
@@ -107,13 +122,24 @@ function emailEvent(order, subject, detail = '', audiences = []) {
 const getNotifs = (role, clientId = null) =>
   db.prepare('SELECT * FROM notifications WHERE role=? AND client_id IS ? ORDER BY id DESC LIMIT 5')
     .all(role, clientId);
-const HOME = { admin: '/admin', client: '/clients', accounts: '/accounts', warehouse: '/warehouse' };
+const HOME = { admin: '/admin', client: '/clients', accounts: '/accounts', warehouse: '/warehouse', p2p: '/p2p' };
 const PORTALS = {
   admin: { key: 'admin', path: '/admin', label: 'Admin' },
   client: { key: 'client', path: '/clients', label: 'Client' },
   accounts: { key: 'accounts', path: '/accounts', label: 'Accounts' },
-  warehouse: { key: 'warehouse', path: '/warehouse', label: 'Warehouse' }
+  warehouse: { key: 'warehouse', path: '/warehouse', label: 'Warehouse' },
+  p2p: { key: 'p2p', path: '/p2p', label: 'P2P' }
 };
+
+// ---- P2P purchase orders ----
+const PO_LABELS = {
+  po_placed: 'PO placed', shipped: 'Shipped', received: 'Received',
+  prep: 'Prep in progress', sent_to_amazon: 'Sent to Amazon'
+};
+// Linear pipeline; a PO only ever moves to its single next state.
+const PO_NEXT = { po_placed: 'shipped', shipped: 'received', received: 'prep', prep: 'sent_to_amazon' };
+// "PO placed by Ahmed" - first name only, as asked.
+const firstNameOf = u => String(u.client_name || u.username || '').trim().split(/\s+/)[0] || u.username;
 
 // Each role has its own session slot (req.session.admin / .client / .accounts),
 // so different portals can be logged in simultaneously in the same browser.
@@ -123,6 +149,7 @@ const requireAdmin = requireRole('admin');
 const requireClient = requireRole('client');
 const requireAccounts = requireRole('accounts');
 const requireWarehouse = requireRole('warehouse');
+const requireP2p = requireRole('p2p');
 
 const renderLogin = (res, role, error, status) =>
   res.status(status || 200).render('login', { portal: PORTALS[role], error: error || null });
@@ -146,6 +173,7 @@ app.post('/admin/login', loginHandler('admin'));
 app.post('/clients/login', loginHandler('client'));
 app.post('/accounts/login', loginHandler('accounts'));
 app.post('/warehouse/login', loginHandler('warehouse'));
+app.post('/p2p/login', loginHandler('p2p'));
 
 // Per-portal logout: only clears that role's session
 for (const [role, p] of Object.entries(PORTALS)) {
@@ -180,7 +208,7 @@ app.get('/admin', (req, res, next) => {
            r.carton AS o_carton, r.discount_pct AS o_discount
     FROM users u LEFT JOIN client_rates r ON r.client_id = u.id
     WHERE u.role='client' ORDER BY u.client_name`).all();
-  const staffUsers = db.prepare("SELECT * FROM users WHERE role IN ('accounts','warehouse') ORDER BY role, username").all();
+  const staffUsers = db.prepare("SELECT * FROM users WHERE role IN ('accounts','warehouse','p2p') ORDER BY role, username").all();
   const TABS = ['orders', 'client-user', 'staff', 'clients'];
   res.render('admin', {
     user: req.session.admin,
@@ -199,7 +227,7 @@ app.get('/admin', (req, res, next) => {
 // Create client, accounts, or warehouse user
 app.post('/admin/clients', requireAdmin, (req, res) => {
   const { client_name, business_name, email, store_name, username, password } = req.body;
-  const role = ['accounts', 'warehouse'].includes(req.body.role) ? req.body.role : 'client';
+  const role = ['accounts', 'warehouse', 'p2p'].includes(req.body.role) ? req.body.role : 'client';
   const tab = role === 'client' ? 'client-user' : 'staff';
   if (!username || !password || !client_name) {
     return res.redirect(`/admin?tab=${tab}&err=Missing required fields`);
@@ -209,7 +237,8 @@ app.post('/admin/clients', requireAdmin, (req, res) => {
                 VALUES (?,?,?,?,?,?,?)`)
       .run(role, username.trim(), bcrypt.hashSync(password, 10), client_name.trim(),
            business_name || null, email || null, store_name || null);
-    const label = role === 'client' ? 'Client' : role === 'accounts' ? 'Accounts user' : 'Warehouse user';
+    const LABELS = { client: 'Client', accounts: 'Accounts user', warehouse: 'Warehouse user', p2p: 'P2P user' };
+    const label = LABELS[role];
     res.redirect(`/admin?tab=${tab}&msg=` + encodeURIComponent(`${label} "${username.trim()}" created`));
   } catch (e) {
     const reason = e.message.includes('UNIQUE') ? 'Username already exists' : `Failed to create user: ${e.message}`;
@@ -221,7 +250,7 @@ app.post('/admin/clients', requireAdmin, (req, res) => {
 app.post('/admin/clients/:id/password', requireAdmin, (req, res) => {
   const tab = req.query.tab === 'staff' ? 'staff' : 'clients';
   if (!req.body.password) return res.redirect(`/admin?tab=${tab}&err=Password required`);
-  db.prepare("UPDATE users SET password_hash=? WHERE id=? AND role IN ('client','accounts','warehouse')")
+  db.prepare("UPDATE users SET password_hash=? WHERE id=? AND role IN ('client','accounts','warehouse','p2p')")
     .run(bcrypt.hashSync(req.body.password, 10), req.params.id);
   res.redirect(`/admin?tab=${tab}&msg=Password updated`);
 });
@@ -359,6 +388,124 @@ app.post('/warehouse/orders/:id/ship-info', requireWarehouse, (req, res) => {
     (missing ? ` ${missing} ASIN(s) still missing info.` : ' All ASINs now have info; client asked to upload shipping labels.'));
   res.redirect('/warehouse?msg=' + encodeURIComponent(
     missing ? `Shipment info saved - ${missing} ASIN(s) still missing info` : 'Shipment info saved for all ASINs - client notified'));
+});
+
+// ---- P2P (purchase orders) ----
+// Search spans every field on the PO, since a buyer may look up any of them.
+function poSearchFilter(q) {
+  const term = (q || '').trim();
+  if (!term) return { clause: '', params: [] };
+  const like = '%' + term.replace(/[\\%_]/g, c => '\\' + c) + '%';
+  const cols = ['po_number', 'store_name', 'brand', 'asin', 'product_name'];
+  return {
+    clause: ` AND (${cols.map(c => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
+    params: cols.map(() => like)
+  };
+}
+
+app.get('/p2p', (req, res, next) => {
+  if (!req.session.p2p) return renderLogin(res, 'p2p');
+  next();
+}, (req, res) => {
+  const q = (req.query.q || '').trim();
+  const f = poSearchFilter(q);
+  const pos = db.prepare(`
+    SELECT * FROM purchase_orders
+    WHERE 1=1${f.clause}
+    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC`).all(...f.params);
+  const eventsByPo = {};
+  for (const e of db.prepare('SELECT * FROM po_events ORDER BY id').all()) {
+    (eventsByPo[e.po_id] = eventsByPo[e.po_id] || []).push(e);
+  }
+  res.render('p2p', {
+    user: req.session.p2p, pos, eventsByPo, q,
+    poLabels: PO_LABELS, poNext: PO_NEXT,
+    notifs: getNotifs('p2p'),
+    openNew: req.query.new === '1',
+    msg: req.query.msg || null,
+    err: req.query.err || null
+  });
+});
+
+// Create a PO. All six fields are mandatory; no photo at this stage.
+app.post('/p2p/pos', requireP2p, (req, res) => {
+  const back = '/p2p?new=1&err=';
+  const f = {
+    po_number: (req.body.po_number || '').trim(),
+    store_name: (req.body.store_name || '').trim(),
+    brand: (req.body.brand || '').trim(),
+    asin: (req.body.asin || '').trim(),
+    product_name: (req.body.product_name || '').trim()
+  };
+  const quantity = parseInt(req.body.quantity, 10);
+  if (Object.values(f).some(v => !v) || !Number.isFinite(quantity) || quantity < 1) {
+    return res.redirect(back + encodeURIComponent('All fields are required, and quantity must be at least 1'));
+  }
+  const me = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.p2p.id);
+  const who = firstNameOf(me);
+  const info = db.prepare(`
+    INSERT INTO purchase_orders (po_number, store_name, brand, asin, product_name, quantity, created_by, created_by_name)
+    VALUES (?,?,?,?,?,?,?,?)`)
+    .run(f.po_number, f.store_name, f.brand, f.asin, f.product_name, quantity, me.id, who);
+  db.prepare(`INSERT INTO po_events (po_id, status, detail, user_id, user_name) VALUES (?,?,?,?,?)`)
+    .run(info.lastInsertRowid, 'po_placed', `${quantity} units of ${f.product_name}`, me.id, who);
+  notify('p2p', `${f.po_number}: PO placed by ${who}`);
+  res.redirect('/p2p?msg=' + encodeURIComponent(`PO ${f.po_number} placed by ${who}`));
+});
+
+// Advance one step along the pipeline. Every transition needs a photo; the
+// move to Shipped also needs carrier, tracking ID and pallet count.
+app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
+  poPhotoUpload.single('photo')(req, res, err => {
+    const fail = m => {
+      if (req.file) { try { fs.unlinkSync(req.file.path); } catch {} }
+      return res.redirect('/p2p?err=' + encodeURIComponent(m));
+    };
+    if (err) return fail(err.message);
+
+    const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id);
+    if (!po) return fail('Purchase order not found');
+    const next = PO_NEXT[po.status];
+    if (!next) return fail(`${po.po_number} is already at the final status`);
+    // Guard against a double submit landing the PO two states forward.
+    if (req.body.from && req.body.from !== po.status) {
+      return fail(`${po.po_number} has already moved to "${PO_LABELS[po.status]}"`);
+    }
+    if (!req.file) return fail(`A photo is required to move ${po.po_number} to "${PO_LABELS[next]}"`);
+
+    let detail = '';
+    if (next === 'shipped') {
+      const carrier = (req.body.carrier || '').trim();
+      const tracking_id = (req.body.tracking_id || '').trim();
+      const pallets = parseInt(req.body.pallets, 10);
+      if (!carrier || !tracking_id || !Number.isFinite(pallets) || pallets < 1) {
+        return fail('Carrier, tracking ID and number of pallets are all required to mark a PO shipped');
+      }
+      db.prepare('UPDATE purchase_orders SET carrier=?, tracking_id=?, pallets=? WHERE id=?')
+        .run(carrier, tracking_id, pallets, po.id);
+      detail = `${carrier} / ${tracking_id} / ${pallets} pallet(s)`;
+    }
+
+    const me = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.p2p.id);
+    const who = firstNameOf(me);
+    const photoName = `po${po.id}-${next}-${Date.now()}${PHOTO_TYPES[req.file.mimetype]}`;
+    fs.renameSync(req.file.path, path.join(PO_PHOTO_DIR, photoName));
+
+    db.prepare("UPDATE purchase_orders SET status=?, updated_at=datetime('now') WHERE id=?").run(next, po.id);
+    db.prepare('INSERT INTO po_events (po_id, status, photo, detail, user_id, user_name) VALUES (?,?,?,?,?,?)')
+      .run(po.id, next, photoName, detail || null, me.id, who);
+    notify('p2p', `${po.po_number}: ${PO_LABELS[next]} by ${who}`);
+    res.redirect('/p2p?msg=' + encodeURIComponent(`${po.po_number} - ${PO_LABELS[next]} by ${who}`));
+  });
+});
+
+// Status photo (P2P users and admin).
+app.get('/po-photo/:eventId', (req, res) => {
+  const s = req.session || {};
+  if (!s.p2p && !s.admin) return res.redirect('/p2p');
+  const ev = db.prepare('SELECT * FROM po_events WHERE id=?').get(req.params.eventId);
+  if (!ev || !ev.photo) return res.status(404).send('Not found');
+  res.sendFile(path.join(PO_PHOTO_DIR, ev.photo));
 });
 
 // ---- accounts (payment verification) ----

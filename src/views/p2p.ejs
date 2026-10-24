@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <%- include('partials/head', { pageTitle: 'P2P' }) %>
+</head>
+<body>
+<%- include('partials/header', {
+      portalKey: 'p2p', portalLabel: 'P2P',
+      headerNote: 'Purchase Orders',
+      logoutAction: '/p2p/logout', logoutLabel: 'Log out (' + user.username + ')'
+    }) %>
+<main>
+  <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
+  <% if (err) { %><div class="flash err"><%= err %></div><% } %>
+
+  <div class="card">
+    <div class="card-head">
+      <h2>Purchase Orders</h2>
+      <div class="head-tools">
+        <%- include('partials/search', { searchAction: '/p2p' }) %>
+        <button type="button" id="addPoBtn">+ Add PO</button>
+      </div>
+    </div>
+    <% if (q) { %>
+      <p class="search-note"><strong><%= pos.length %></strong> result<%= pos.length === 1 ? '' : 's' %> for &ldquo;<%= q %>&rdquo;</p>
+    <% } %>
+
+    <div class="table-wrap">
+      <table>
+        <tr>
+          <th>PO #</th><th>Store</th><th>Brand</th><th>ASIN</th><th>Product</th><th>Qty</th>
+          <th>Status</th><th>Tracking</th><th>History</th><th>Created</th><th>Updated</th><th>Action</th>
+        </tr>
+        <% pos.forEach(po => { %>
+        <tr>
+          <td><strong><%= po.po_number %></strong></td>
+          <td><%= po.store_name %></td>
+          <td><%= po.brand %></td>
+          <td><%= po.asin %></td>
+          <td><%= po.product_name %></td>
+          <td><%= po.quantity %></td>
+          <td>
+            <span class="badge <%= po.status %>"><%= poLabels[po.status] %></span>
+            <div class="by-line">by <%= (eventsByPo[po.id] || []).slice(-1)[0] ? eventsByPo[po.id].slice(-1)[0].user_name : po.created_by_name %></div>
+          </td>
+          <td>
+            <% if (po.tracking_id) { %>
+              <%= po.carrier %><br><%= po.tracking_id %><br>
+              <small class="hint"><%= po.pallets %> pallet<%= po.pallets === 1 ? '' : 's' %></small>
+            <% } else { %>-<% } %>
+          </td>
+          <td>
+            <details>
+              <summary><%= (eventsByPo[po.id] || []).length %> update<%= (eventsByPo[po.id] || []).length === 1 ? '' : 's' %></summary>
+              <div class="po-history">
+                <% (eventsByPo[po.id] || []).forEach(e => { %>
+                  <div class="po-event">
+                    <span class="badge <%= e.status %>"><%= poLabels[e.status] %></span>
+                    <div class="po-event-meta">
+                      <%= e.user_name %> &middot; <%- include('partials/ts', { value: e.created_at }) %>
+                    </div>
+                    <% if (e.detail) { %><div class="po-event-detail"><%= e.detail %></div><% } %>
+                    <% if (e.photo) { %>
+                      <a href="/po-photo/<%= e.id %>" target="_blank" rel="noopener">View photo</a>
+                    <% } %>
+                  </div>
+                <% }) %>
+              </div>
+            </details>
+          </td>
+          <td class="ts-cell"><%- include('partials/ts', { value: po.created_at }) %></td>
+          <td class="ts-cell"><%- include('partials/ts', { value: po.updated_at || po.created_at }) %></td>
+          <td>
+            <% const next = poNext[po.status]; %>
+            <% if (next) { %>
+              <form method="post" action="/p2p/pos/<%= po.id %>/advance"
+                    enctype="multipart/form-data" class="advance-form">
+                <input type="hidden" name="from" value="<%= po.status %>">
+                <% if (next === 'shipped') { %>
+                  <input name="carrier" placeholder="Carrier" required>
+                  <input name="tracking_id" placeholder="Tracking ID" required>
+                  <input name="pallets" type="number" min="1" placeholder="Pallets" required>
+                <% } %>
+                <label for="photo-<%= po.id %>">Photo *</label>
+                <input type="file" id="photo-<%= po.id %>" name="photo"
+                       accept="image/jpeg,image/png,image/webp,image/heic" required>
+                <button type="submit" class="small">Mark <%= poLabels[next] %></button>
+              </form>
+            <% } else { %>
+              <span class="badge sent_to_amazon">Complete</span>
+            <% } %>
+          </td>
+        </tr>
+        <% }) %>
+        <% if (pos.length === 0) { %>
+          <tr><td colspan="12"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
+        <% } %>
+      </table>
+    </div>
+    <p><small class="hint">Pipeline: PO placed &rarr; Shipped &rarr; Received &rarr; Prep in progress &rarr; Sent to Amazon.
+      Every status change needs a photo and records who made it.</small></p>
+  </div>
+</main>
+
+<dialog id="newPoModal">
+  <h3>New Purchase Order</h3>
+  <form method="post" action="/p2p/pos">
+    <div class="grid cols-2">
+      <div><label>PO # *</label><input name="po_number" required autocomplete="off"></div>
+      <div><label>Store Name *</label><input name="store_name" required autocomplete="off"></div>
+      <div><label>Brand *</label><input name="brand" required autocomplete="off"></div>
+      <div><label>ASIN *</label><input name="asin" required autocomplete="off"></div>
+      <div><label>Product Name *</label><input name="product_name" required autocomplete="off"></div>
+      <div><label>Quantity *</label><input name="quantity" type="number" min="1" required></div>
+    </div>
+    <p><small class="hint">All fields are required. The PO is created at <strong>PO placed</strong>,
+      recorded against your name. A photo is required from the next status onward.</small></p>
+    <div class="dialog-actions">
+      <button type="submit" id="placePoBtn" disabled>PO placed</button>
+      <button type="button" class="secondary" id="closePoBtn">Cancel</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(function () {
+  var modal = document.getElementById('newPoModal');
+  var form = modal.querySelector('form');
+  var submit = document.getElementById('placePoBtn');
+  var required = Array.prototype.slice.call(form.querySelectorAll('[required]'));
+
+  // The submit button stays disabled until every mandatory field is filled.
+  function sync() {
+    submit.disabled = !required.every(function (el) { return el.value.trim() !== ''; });
+  }
+  required.forEach(function (el) {
+    el.addEventListener('input', sync);
+    el.addEventListener('change', sync);
+  });
+  sync();
+
+  document.getElementById('addPoBtn').addEventListener('click', function () { modal.showModal(); sync(); });
+  document.getElementById('closePoBtn').addEventListener('click', function () { modal.close(); });
+  <% if (openNew) { %>modal.showModal(); sync();<% } %>
+})();
+</script>
+<%- include('partials/localtime') %>
+</body>
+</html>
