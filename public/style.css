@@ -318,6 +318,7 @@ body.auth {
   margin:5px 0 15px; font-size:10px; font-weight:700; letter-spacing:1.7px;
   text-transform:uppercase; color:var(--muted);
 }
+.auth-brand + .portal-chip { margin-top:14px; }   /* no tagline (P2P) */
 .auth-card form { text-align:left; margin-top:20px; }
 .auth-card .flash { text-align:left; margin:18px 0 0; }
 .auth-card button[type=submit] { width:100%; margin-top:22px; padding:11px; font-size:14px; }

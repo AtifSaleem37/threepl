@@ -123,12 +123,14 @@ const getNotifs = (role, clientId = null) =>
   db.prepare('SELECT * FROM notifications WHERE role=? AND client_id IS ? ORDER BY id DESC LIMIT 5')
     .all(role, clientId);
 const HOME = { admin: '/admin', client: '/clients', accounts: '/accounts', warehouse: '/warehouse', p2p: '/p2p' };
+// `tagline` sits under the wordmark on the login card. P2P handles purchase
+// orders rather than prep, so it carries no tagline.
 const PORTALS = {
-  admin: { key: 'admin', path: '/admin', label: 'Admin' },
-  client: { key: 'client', path: '/clients', label: 'Client' },
-  accounts: { key: 'accounts', path: '/accounts', label: 'Accounts' },
-  warehouse: { key: 'warehouse', path: '/warehouse', label: 'Warehouse' },
-  p2p: { key: 'p2p', path: '/p2p', label: 'P2P' }
+  admin: { key: 'admin', path: '/admin', label: 'Admin', tagline: '3PL Prep Portal' },
+  client: { key: 'client', path: '/clients', label: 'Client', tagline: '3PL Prep Portal' },
+  accounts: { key: 'accounts', path: '/accounts', label: 'Accounts', tagline: '3PL Prep Portal' },
+  warehouse: { key: 'warehouse', path: '/warehouse', label: 'Warehouse', tagline: '3PL Prep Portal' },
+  p2p: { key: 'p2p', path: '/p2p', label: 'P2P', tagline: '' }
 };
 
 // ---- P2P purchase orders ----
