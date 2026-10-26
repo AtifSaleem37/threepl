@@ -145,6 +145,16 @@ const PO_NEXT = {
   po_placed: 'shipped', shipped: 'received', received: 'prep',
   prep: 'sent_to_amazon', partial_sent: 'sent_to_amazon'
 };
+// Password policy: at least 8 characters, containing both letters and digits.
+// Returns the reason it fails, or null when acceptable.
+function passwordProblem(pw) {
+  const str = String(pw == null ? '' : pw);
+  if (str.length < 8) return 'Password must be at least 8 characters long';
+  if (!/[A-Za-z]/.test(str)) return 'Password must contain at least one letter';
+  if (!/[0-9]/.test(str)) return 'Password must contain at least one number';
+  return null;
+}
+
 // Strict whole-number parse for pallet counts. parseInt is unusable here: it
 // silently truncates "3.7" to 3, reads "1e3" as 1 and "5abc" as 5. Leading zeros
 // and surrounding whitespace are fine; signs, decimals and trailing text are not.
@@ -276,7 +286,7 @@ app.get('/admin', (req, res, next) => {
     FROM users u LEFT JOIN client_rates r ON r.client_id = u.id
     WHERE u.role='client' ORDER BY u.client_name`).all();
   const staffUsers = db.prepare("SELECT * FROM users WHERE role IN ('accounts','warehouse','p2p') ORDER BY role, username").all();
-  const TABS = ['orders', 'client-user', 'staff', 'clients'];
+  const TABS = ['orders', 'client-user', 'staff', 'clients', 'account'];
   res.render('admin', {
     user: req.session.admin,
     orders, clients, staffUsers, q,
@@ -320,6 +330,28 @@ app.post('/admin/clients/:id/password', requireAdmin, (req, res) => {
   db.prepare("UPDATE users SET password_hash=? WHERE id=? AND role IN ('client','accounts','warehouse','p2p')")
     .run(bcrypt.hashSync(req.body.password, 10), req.params.id);
   res.redirect(`/admin?tab=${tab}&msg=Password updated`);
+});
+
+// Admin changes their own password. The current password is required, so a
+// hijacked session alone cannot lock the real admin out.
+app.post('/admin/password', requireAdmin, (req, res) => {
+  const back = '/admin?tab=account&';
+  const { current_password, new_password, confirm_password } = req.body;
+  const me = db.prepare("SELECT * FROM users WHERE id=? AND role='admin'").get(req.session.admin.id);
+  if (!me || !bcrypt.compareSync(current_password || '', me.password_hash)) {
+    return res.redirect(back + 'err=' + encodeURIComponent('Current password is incorrect'));
+  }
+  const problem = passwordProblem(new_password);
+  if (problem) return res.redirect(back + 'err=' + encodeURIComponent(problem));
+  if (new_password !== confirm_password) {
+    return res.redirect(back + 'err=' + encodeURIComponent('New password and confirmation do not match'));
+  }
+  if (bcrypt.compareSync(new_password, me.password_hash)) {
+    return res.redirect(back + 'err=' + encodeURIComponent('New password must be different from the current one'));
+  }
+  db.prepare('UPDATE users SET password_hash=? WHERE id=?').run(bcrypt.hashSync(new_password, 10), me.id);
+  console.log(`[admin] password changed for "${me.username}"`);
+  res.redirect(back + 'msg=' + encodeURIComponent('Password updated'));
 });
 
 // Global rates

@@ -14,6 +14,7 @@
     <a href="/admin?tab=client-user" class="<%= tab === 'client-user' ? 'active' : '' %>">Create Client</a>
     <a href="/admin?tab=staff" class="<%= tab === 'staff' ? 'active' : '' %>">Staff Users</a>
     <a href="/admin?tab=clients" class="<%= tab === 'clients' ? 'active' : '' %>">Clients &amp; Rates</a>
+    <a href="/admin?tab=account" class="<%= tab === 'account' ? 'active' : '' %>">My Account</a>
   </nav>
 
   <% if (msg) { %><div class="flash ok"><%= msg %></div><% } %>
@@ -195,6 +196,62 @@
       </table>
     </div>
   </div>
+  <% } %>
+
+  <% if (tab === 'account') { %>
+  <div class="card">
+    <h2>Change My Password</h2>
+    <p><small class="hint">Signed in as <strong><%= user.username %></strong>.
+      Your current password is required, and the new one must be at least
+      <strong>8 characters</strong> containing both <strong>letters and numbers</strong>.</small></p>
+    <form method="post" action="/admin/password" class="pw-form" autocomplete="off">
+      <label>Current password *</label>
+      <input type="password" name="current_password" autocomplete="current-password" required>
+
+      <label>New password *</label>
+      <input type="password" name="new_password" id="newPw"
+             minlength="8" pattern="(?=.*[A-Za-z])(?=.*[0-9]).{8,}"
+             title="At least 8 characters, including a letter and a number"
+             autocomplete="new-password" required>
+
+      <label>Confirm new password *</label>
+      <input type="password" name="confirm_password" id="confirmPw"
+             minlength="8" autocomplete="new-password" required>
+
+      <ul class="pw-rules" id="pwRules">
+        <li data-rule="len">At least 8 characters</li>
+        <li data-rule="alpha">Contains a letter</li>
+        <li data-rule="num">Contains a number</li>
+        <li data-rule="match">Both entries match</li>
+      </ul>
+
+      <button type="submit">Update password</button>
+    </form>
+  </div>
+
+  <script>
+  (function () {
+    var pw = document.getElementById('newPw');
+    var cf = document.getElementById('confirmPw');
+    var rules = {
+      len: function (v) { return v.length >= 8; },
+      alpha: function (v) { return /[A-Za-z]/.test(v); },
+      num: function (v) { return /[0-9]/.test(v); },
+      match: function (v) { return v.length > 0 && v === cf.value; }
+    };
+    // Live feedback only - the server re-checks every rule on submit.
+    function sync() {
+      var v = pw.value;
+      document.querySelectorAll('#pwRules li').forEach(function (li) {
+        li.classList.toggle('met', rules[li.dataset.rule](v));
+      });
+      cf.setCustomValidity(cf.value && cf.value !== v ? 'Passwords do not match' : '');
+    }
+    pw.addEventListener('input', sync);
+    cf.addEventListener('input', sync);
+    sync();
+  })();
+  </script>
   <% } %>
 </main>
 <%- include('partials/localtime') %>

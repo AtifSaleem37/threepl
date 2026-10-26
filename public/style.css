@@ -390,3 +390,14 @@ dialog button[disabled] { opacity:.45; cursor:not-allowed; filter:none; box-shad
 .wh-table .table-wrap { margin-top:10px; max-width:460px; }
 .badge.partial_sent { background:#ffedd5; color:#9a3412; border-color:#fed7aa; }
 @media (max-width:640px) { .wh-grid { gap:22px; justify-content:center; } }
+
+/* ---- change password ---------------------------------------------------- */
+.pw-form { max-width:380px; }
+.pw-form button { margin-top:18px; }
+.pw-rules { list-style:none; margin:16px 0 0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.pw-rules li { font-size:12.5px; color:var(--muted); display:flex; align-items:center; gap:8px; }
+.pw-rules li::before {
+  content:"○"; font-size:13px; line-height:1; color:#9aa8bf; width:13px; text-align:center;
+}
+.pw-rules li.met { color:#0b6b43; }
+.pw-rules li.met::before { content:"✓"; color:#10b981; font-weight:700; }
