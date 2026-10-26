@@ -403,9 +403,12 @@ dialog button[disabled] { opacity:.45; cursor:not-allowed; filter:none; box-shad
 .pw-rules li.met::before { content:"✓"; color:#10b981; font-weight:700; }
 
 /* ---- P2P line items ----------------------------------------------------- */
-.po-item { font-size:12px; line-height:1.5; }
-.po-item strong { font-variant-numeric:tabular-nums; }
-.po-item-qty { color:var(--muted); white-space:nowrap; }
+/* One line per item in each of the ASIN / Product / Qty cells. A fixed line
+   height and nowrap keep the three columns level with each other. */
+.item-col { vertical-align:top; }
+.item-line { font-size:12px; line-height:20px; height:20px; white-space:nowrap; }
+.item-col strong { font-variant-numeric:tabular-nums; }
+.item-qty { text-align:right; font-variant-numeric:tabular-nums; }
 .po-products-heading { margin:20px 0 10px; font-size:12px; font-weight:700;
   letter-spacing:.4px; text-transform:uppercase; color:var(--navy); }
 .po-product-row { display:grid; grid-template-columns:1.1fr 1.6fr .7fr auto; gap:8px;

@@ -510,10 +510,7 @@ app.get('/p2p', (req, res, next) => {
   const q = (req.query.q || '').trim();
   const f = poSearchFilter(q);
   const pos = db.prepare(`
-    SELECT p.*,
-      (SELECT COUNT(*) FROM po_items i WHERE i.po_id = p.id) AS item_count,
-      (SELECT COALESCE(SUM(i.quantity), 0) FROM po_items i WHERE i.po_id = p.id) AS total_qty
-    FROM purchase_orders p
+    SELECT p.* FROM purchase_orders p
     WHERE 1=1${f.clause}
     ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.id DESC`).all(...f.params);
   const eventsByPo = {}, itemsByPo = {};

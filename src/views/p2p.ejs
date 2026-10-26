@@ -34,7 +34,7 @@
     <div class="table-wrap">
       <table>
         <tr>
-          <th>PO #</th><th>Store</th><th>Brand</th><th>Items (ASIN / product / qty)</th><th>Total Qty</th>
+          <th>PO #</th><th>Store</th><th>Brand</th><th>ASIN</th><th>Product</th><th>Qty</th>
           <th>Status</th><th>Tracking</th><th>History</th><th>Created</th><th>Updated</th><th>Action</th>
         </tr>
         <% pos.forEach(po => { %>
@@ -42,18 +42,18 @@
           <td><strong><%= po.po_number %></strong></td>
           <td><%= po.store_name %></td>
           <td><%= po.brand %></td>
-          <td>
-            <% (itemsByPo[po.id] || []).forEach(it => { %>
-              <div class="po-item">
-                <strong><%= it.asin %></strong> &middot; <%= it.product_name %>
-                <span class="po-item-qty">&times; <%= it.quantity %></span>
-              </div>
-            <% }) %>
-            <% if (!(itemsByPo[po.id] || []).length) { %><span class="hint">No items</span><% } %>
+          <% const poItems = itemsByPo[po.id] || []; %>
+          <td class="item-col">
+            <% poItems.forEach(it => { %><div class="item-line"><strong><%= it.asin %></strong></div><% }) %>
+            <% if (!poItems.length) { %><span class="hint">-</span><% } %>
           </td>
-          <td>
-            <strong><%= po.total_qty %></strong>
-            <div class="by-line"><%= po.item_count %> item<%= po.item_count === 1 ? '' : 's' %></div>
+          <td class="item-col">
+            <% poItems.forEach(it => { %><div class="item-line"><%= it.product_name %></div><% }) %>
+            <% if (!poItems.length) { %><span class="hint">No items</span><% } %>
+          </td>
+          <td class="item-col item-qty">
+            <% poItems.forEach(it => { %><div class="item-line"><%= it.quantity %></div><% }) %>
+            <% if (!poItems.length) { %><span class="hint">-</span><% } %>
           </td>
           <td>
             <span class="badge <%= po.status %>"><%= poLabels[po.status] %></span>
@@ -123,7 +123,7 @@
         </tr>
         <% }) %>
         <% if (pos.length === 0) { %>
-          <tr><td colspan="11"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
+          <tr><td colspan="12"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
         <% } %>
       </table>
     </div>
