@@ -401,3 +401,16 @@ dialog button[disabled] { opacity:.45; cursor:not-allowed; filter:none; box-shad
 }
 .pw-rules li.met { color:#0b6b43; }
 .pw-rules li.met::before { content:"✓"; color:#10b981; font-weight:700; }
+
+/* ---- P2P line items ----------------------------------------------------- */
+.po-item { font-size:12px; line-height:1.5; }
+.po-item strong { font-variant-numeric:tabular-nums; }
+.po-item-qty { color:var(--muted); white-space:nowrap; }
+.po-products-heading { margin:20px 0 10px; font-size:12px; font-weight:700;
+  letter-spacing:.4px; text-transform:uppercase; color:var(--navy); }
+.po-product-row { display:grid; grid-template-columns:1.1fr 1.6fr .7fr auto; gap:8px;
+  align-items:center; margin-bottom:8px; }
+.po-product-row input { font-size:13px; padding:8px 10px; }
+.po-product-row .remove { padding:7px 12px; }
+#newPoModal { max-width:720px; }
+@media (max-width:640px) { .po-product-row { grid-template-columns:1fr; } }

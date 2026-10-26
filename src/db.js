@@ -97,9 +97,6 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   po_number TEXT NOT NULL,
   store_name TEXT NOT NULL,
   brand TEXT NOT NULL,
-  asin TEXT NOT NULL,
-  product_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'po_placed'
     CHECK (status IN ('po_placed','shipped','received','prep','partial_sent','sent_to_amazon')),
   carrier TEXT,
@@ -110,6 +107,16 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
   created_by_name TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Line items on a PO. PO number, store and brand live on the header; ASIN,
+-- product name and quantity vary per item.
+CREATE TABLE IF NOT EXISTS po_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
+  asin TEXT NOT NULL,
+  product_name TEXT NOT NULL,
+  quantity INTEGER NOT NULL
 );
 
 -- One row per state the PO has been in, including its creation. This is the
@@ -225,6 +232,90 @@ if (!hasCol('order_items', 'shipping_label_uploaded_at')) db.exec('ALTER TABLE o
 // proof-of-payment screenshot the client attaches when marking payment sent
 if (!hasCol('orders', 'payment_proof')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof TEXT');
 if (!hasCol('orders', 'payment_proof_uploaded_at')) db.exec('ALTER TABLE orders ADD COLUMN payment_proof_uploaded_at TEXT');
+// --- POs become header + line items, and rows sharing a PO number are merged ---
+// Old shape carried one ASIN per row, so the same PO number appeared several
+// times. Items move to po_items; duplicates collapse onto the earliest row.
+if (hasCol('purchase_orders', 'asin')) {
+  const RANK = { po_placed: 0, shipped: 1, received: 2, prep: 3, partial_sent: 4, sent_to_amazon: 5 };
+  db.exec('PRAGMA foreign_keys = OFF');
+  db.exec('PRAGMA legacy_alter_table = 1');
+  try {
+    db.exec('BEGIN');
+
+    // 1. every existing row contributes its single ASIN as a line item
+    db.exec(`INSERT INTO po_items (po_id, asin, product_name, quantity)
+             SELECT id, asin, product_name, quantity FROM purchase_orders`);
+
+    // 2. collapse rows sharing a PO number onto the earliest of them
+    const rows = db.prepare('SELECT * FROM purchase_orders ORDER BY id').all();
+    const groups = new Map();
+    for (const r of rows) {
+      if (!groups.has(r.po_number)) groups.set(r.po_number, []);
+      groups.get(r.po_number).push(r);
+    }
+    let mergedPos = 0, removedRows = 0;
+    for (const [poNumber, grp] of groups) {
+      if (grp.length < 2) continue;
+      const keep = grp[0];
+      // furthest-advanced row decides status and carries the tracking details
+      const lead = grp.reduce((a, b) => (RANK[b.status] ?? 0) > (RANK[a.status] ?? 0) ? b : a, grp[0]);
+      const pallets = grp.reduce((n, r) => n + (r.pallets || 0), 0);
+      const palletsSent = grp.reduce((n, r) => n + (r.pallets_sent || 0), 0);
+      for (const r of grp.slice(1)) {
+        db.prepare('UPDATE po_items SET po_id=? WHERE po_id=?').run(keep.id, r.id);
+        db.prepare('UPDATE po_events SET po_id=? WHERE po_id=?').run(keep.id, r.id);
+        db.prepare('DELETE FROM purchase_orders WHERE id=?').run(r.id);
+        removedRows++;
+      }
+      db.prepare(`UPDATE purchase_orders
+                  SET status=?, carrier=?, tracking_id=?, pallets=?, pallets_sent=?,
+                      updated_at=?
+                  WHERE id=?`)
+        .run(lead.status, lead.carrier, lead.tracking_id,
+             pallets || null, palletsSent,
+             grp.reduce((a, r) => (r.updated_at > a ? r.updated_at : a), keep.updated_at),
+             keep.id);
+      mergedPos++;
+      console.log(`  merged ${grp.length} rows sharing PO ${poNumber} -> status ${lead.status}`);
+    }
+
+    // 3. drop the per-item columns from the header
+    const COLS = `id, po_number, store_name, brand, status, carrier, tracking_id,
+                  pallets, pallets_sent, created_by, created_by_name, created_at, updated_at`;
+    db.exec(`
+      DROP TABLE IF EXISTS purchase_orders_old;
+      ALTER TABLE purchase_orders RENAME TO purchase_orders_old;
+      CREATE TABLE purchase_orders (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        po_number TEXT NOT NULL,
+        store_name TEXT NOT NULL,
+        brand TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'po_placed'
+          CHECK (status IN ('po_placed','shipped','received','prep','partial_sent','sent_to_amazon')),
+        carrier TEXT,
+        tracking_id TEXT,
+        pallets INTEGER,
+        pallets_sent INTEGER NOT NULL DEFAULT 0,
+        created_by INTEGER REFERENCES users(id),
+        created_by_name TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+      INSERT INTO purchase_orders (${COLS}) SELECT ${COLS} FROM purchase_orders_old;
+      DROP TABLE purchase_orders_old;
+    `);
+    db.exec('COMMIT');
+    console.log(`Migrated purchase_orders to header + line items` +
+      (mergedPos ? ` (${mergedPos} PO number(s) merged, ${removedRows} duplicate row(s) folded in)` : ''));
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch {}
+    throw e;
+  } finally {
+    db.exec('PRAGMA legacy_alter_table = 0');
+    db.exec('PRAGMA foreign_keys = ON');
+  }
+}
+
 // Running total of pallets already despatched to Amazon, for partial sends.
 if (!hasCol('purchase_orders', 'pallets_sent')) {
   db.exec('ALTER TABLE purchase_orders ADD COLUMN pallets_sent INTEGER NOT NULL DEFAULT 0');

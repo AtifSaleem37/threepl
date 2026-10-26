@@ -34,7 +34,7 @@
     <div class="table-wrap">
       <table>
         <tr>
-          <th>PO #</th><th>Store</th><th>Brand</th><th>ASIN</th><th>Product</th><th>Qty</th>
+          <th>PO #</th><th>Store</th><th>Brand</th><th>Items (ASIN / product / qty)</th><th>Total Qty</th>
           <th>Status</th><th>Tracking</th><th>History</th><th>Created</th><th>Updated</th><th>Action</th>
         </tr>
         <% pos.forEach(po => { %>
@@ -42,9 +42,19 @@
           <td><strong><%= po.po_number %></strong></td>
           <td><%= po.store_name %></td>
           <td><%= po.brand %></td>
-          <td><%= po.asin %></td>
-          <td><%= po.product_name %></td>
-          <td><%= po.quantity %></td>
+          <td>
+            <% (itemsByPo[po.id] || []).forEach(it => { %>
+              <div class="po-item">
+                <strong><%= it.asin %></strong> &middot; <%= it.product_name %>
+                <span class="po-item-qty">&times; <%= it.quantity %></span>
+              </div>
+            <% }) %>
+            <% if (!(itemsByPo[po.id] || []).length) { %><span class="hint">No items</span><% } %>
+          </td>
+          <td>
+            <strong><%= po.total_qty %></strong>
+            <div class="by-line"><%= po.item_count %> item<%= po.item_count === 1 ? '' : 's' %></div>
+          </td>
           <td>
             <span class="badge <%= po.status %>"><%= poLabels[po.status] %></span>
             <div class="by-line">by <%= (eventsByPo[po.id] || []).slice(-1)[0] ? eventsByPo[po.id].slice(-1)[0].user_name : po.created_by_name %></div>
@@ -113,7 +123,7 @@
         </tr>
         <% }) %>
         <% if (pos.length === 0) { %>
-          <tr><td colspan="12"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
+          <tr><td colspan="11"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
         <% } %>
       </table>
     </div>
@@ -133,21 +143,34 @@
 <dialog id="newPoModal">
   <h3>New Purchase Order</h3>
   <form method="post" action="/p2p/pos">
-    <div class="grid cols-2">
+    <div class="grid cols-3">
       <div><label>PO # *</label><input name="po_number" required autocomplete="off"></div>
       <div><label>Store Name *</label><input name="store_name" required autocomplete="off"></div>
       <div><label>Brand *</label><input name="brand" required autocomplete="off"></div>
-      <div><label>ASIN *</label><input name="asin" required autocomplete="off"></div>
-      <div><label>Product Name *</label><input name="product_name" required autocomplete="off"></div>
-      <div><label>Quantity *</label><input name="quantity" type="number" min="1" required></div>
     </div>
-    <p><small class="hint">All fields are required. The PO is created at <strong>PO placed</strong>,
+
+    <h4 class="po-products-heading">Products</h4>
+    <div id="poProducts"></div>
+    <button type="button" class="secondary small" id="addProductBtn">+ Add product</button>
+
+    <p><small class="hint">PO number, store and brand apply to the whole PO; ASIN, product name
+      and quantity vary per product. The PO is created at <strong>PO placed</strong>,
       recorded against your name.</small></p>
     <div class="dialog-actions">
       <button type="submit" id="placePoBtn" disabled>PO placed</button>
       <button type="button" class="secondary" id="closePoBtn">Cancel</button>
     </div>
   </form>
+
+  <template id="poProductRow">
+    <div class="po-product-row">
+      <input name="__asin" placeholder="ASIN *" autocomplete="off" required>
+      <input name="__product" placeholder="Product name *" autocomplete="off" required>
+      <input name="__qty" type="number" min="1" step="1" inputmode="numeric"
+             placeholder="Qty *" title="Whole units, 1 or more" required>
+      <button type="button" class="secondary remove" title="Remove this product">&minus;</button>
+    </div>
+  </template>
 </dialog>
 
 <script>
@@ -155,20 +178,38 @@
   var modal = document.getElementById('newPoModal');
   var form = modal.querySelector('form');
   var submit = document.getElementById('placePoBtn');
-  var required = Array.prototype.slice.call(form.querySelectorAll('[required]'));
+  var list = document.getElementById('poProducts');
+  var tpl = document.getElementById('poProductRow');
+  var idx = 0;
 
-  // The submit button stays disabled until every mandatory field is filled.
+  // Submit stays disabled until the header and every product row are filled.
   function sync() {
-    submit.disabled = !required.every(function (el) { return el.value.trim() !== ''; });
+    var ok = Array.prototype.slice.call(form.querySelectorAll('[required]'))
+      .every(function (el) { return el.value.trim() !== ''; });
+    submit.disabled = !ok || list.children.length === 0;
   }
-  required.forEach(function (el) {
-    el.addEventListener('input', sync);
-    el.addEventListener('change', sync);
-  });
-  sync();
 
+  function addProduct() {
+    var frag = tpl.content.cloneNode(true);
+    frag.querySelector('[name="__asin"]').name = 'items[' + idx + '][asin]';
+    frag.querySelector('[name="__product"]').name = 'items[' + idx + '][product_name]';
+    frag.querySelector('[name="__qty"]').name = 'items[' + idx + '][quantity]';
+    frag.querySelector('.remove').addEventListener('click', function (e) {
+      // Never remove the last row - a PO must carry at least one product.
+      if (list.children.length > 1) { e.target.closest('.po-product-row').remove(); sync(); }
+    });
+    list.appendChild(frag);
+    idx++;
+    sync();
+  }
+
+  form.addEventListener('input', sync);
+  form.addEventListener('change', sync);
+  document.getElementById('addProductBtn').addEventListener('click', addProduct);
   document.getElementById('addPoBtn').addEventListener('click', function () { modal.showModal(); sync(); });
   document.getElementById('closePoBtn').addEventListener('click', function () { modal.close(); });
+
+  addProduct();
   <% if (openNew) { %>modal.showModal(); sync();<% } %>
 })();
 </script>

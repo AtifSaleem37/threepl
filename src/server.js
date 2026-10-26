@@ -490,16 +490,17 @@ app.post('/warehouse/orders/:id/ship-info', requireWarehouse, (req, res) => {
 });
 
 // ---- P2P (purchase orders) ----
-// Search spans every field on the PO, since a buyer may look up any of them.
+// Search spans the PO header and its line items, since a buyer may look up a
+// PO number, a store, a brand, or any ASIN or product name sitting under it.
 function poSearchFilter(q) {
   const term = (q || '').trim();
   if (!term) return { clause: '', params: [] };
   const like = '%' + term.replace(/[\\%_]/g, c => '\\' + c) + '%';
-  const cols = ['po_number', 'store_name', 'brand', 'asin', 'product_name'];
-  return {
-    clause: ` AND (${cols.map(c => `${c} LIKE ? ESCAPE '\\'`).join(' OR ')})`,
-    params: cols.map(() => like)
-  };
+  const header = ['po_number', 'store_name', 'brand'];
+  const clause = ` AND (${header.map(c => `p.${c} LIKE ? ESCAPE '\\'`).join(' OR ')}
+      OR EXISTS (SELECT 1 FROM po_items i WHERE i.po_id = p.id
+                 AND (i.asin LIKE ? ESCAPE '\\' OR i.product_name LIKE ? ESCAPE '\\')))`;
+  return { clause, params: [...header.map(() => like), like, like] };
 }
 
 app.get('/p2p', (req, res, next) => {
@@ -509,15 +510,21 @@ app.get('/p2p', (req, res, next) => {
   const q = (req.query.q || '').trim();
   const f = poSearchFilter(q);
   const pos = db.prepare(`
-    SELECT * FROM purchase_orders
+    SELECT p.*,
+      (SELECT COUNT(*) FROM po_items i WHERE i.po_id = p.id) AS item_count,
+      (SELECT COALESCE(SUM(i.quantity), 0) FROM po_items i WHERE i.po_id = p.id) AS total_qty
+    FROM purchase_orders p
     WHERE 1=1${f.clause}
-    ORDER BY COALESCE(updated_at, created_at) DESC, id DESC`).all(...f.params);
-  const eventsByPo = {};
+    ORDER BY COALESCE(p.updated_at, p.created_at) DESC, p.id DESC`).all(...f.params);
+  const eventsByPo = {}, itemsByPo = {};
   for (const e of db.prepare('SELECT * FROM po_events ORDER BY id').all()) {
     (eventsByPo[e.po_id] = eventsByPo[e.po_id] || []).push(e);
   }
+  for (const i of db.prepare('SELECT * FROM po_items ORDER BY id').all()) {
+    (itemsByPo[i.po_id] = itemsByPo[i.po_id] || []).push(i);
+  }
   res.render('p2p', {
-    user: req.session.p2p, pos, eventsByPo, q,
+    user: req.session.p2p, pos, eventsByPo, itemsByPo, q,
     poLabels: PO_LABELS, poNext: PO_NEXT, poPhotoRequired: PO_PHOTO_REQUIRED,
     wh: warehouseStatus(),
     notifs: getNotifs('p2p'),
@@ -528,30 +535,60 @@ app.get('/p2p', (req, res, next) => {
   });
 });
 
-// Create a PO. All six fields are mandatory; no photo at this stage.
+// Create a PO: one header (PO number, store, brand) plus one or more line
+// items. No photo at this stage.
 app.post('/p2p/pos', requireP2p, (req, res) => {
   const back = '/p2p?new=1&err=';
   const f = {
     po_number: (req.body.po_number || '').trim(),
     store_name: (req.body.store_name || '').trim(),
-    brand: (req.body.brand || '').trim(),
-    asin: (req.body.asin || '').trim(),
-    product_name: (req.body.product_name || '').trim()
+    brand: (req.body.brand || '').trim()
   };
-  const quantity = parseInt(req.body.quantity, 10);
-  if (Object.values(f).some(v => !v) || !Number.isFinite(quantity) || quantity < 1) {
-    return res.redirect(back + encodeURIComponent('All fields are required, and quantity must be at least 1'));
+  if (Object.values(f).some(v => !v)) {
+    return res.redirect(back + encodeURIComponent('PO number, store name and brand are all required'));
   }
+
+  const raw = req.body.items ? Object.values(req.body.items) : [];
+  const items = raw
+    .map(i => ({
+      asin: (i.asin || '').trim(),
+      product_name: (i.product_name || '').trim(),
+      quantity: wholeNumber(i.quantity)
+    }))
+    // drop rows the user left entirely blank, but keep half-filled ones so they
+    // are reported rather than silently discarded
+    .filter(i => i.asin || i.product_name || i.quantity !== null);
+
+  if (items.length === 0) {
+    return res.redirect(back + encodeURIComponent('Add at least one product'));
+  }
+  if (items.some(i => !i.asin || !i.product_name)) {
+    return res.redirect(back + encodeURIComponent('Every product needs an ASIN and a product name'));
+  }
+  if (items.some(i => i.quantity === null)) {
+    return res.redirect(back + encodeURIComponent('Every product quantity must be a whole number greater than zero'));
+  }
+  const dupes = items.map(i => i.asin.toUpperCase())
+    .filter((a, idx, all) => all.indexOf(a) !== idx);
+  if (dupes.length) {
+    return res.redirect(back + encodeURIComponent(`ASIN ${dupes[0]} is listed more than once on this PO`));
+  }
+
   const me = db.prepare('SELECT * FROM users WHERE id=?').get(req.session.p2p.id);
   const who = firstNameOf(me);
+  const totalQty = items.reduce((n, i) => n + i.quantity, 0);
+
   const info = db.prepare(`
-    INSERT INTO purchase_orders (po_number, store_name, brand, asin, product_name, quantity, created_by, created_by_name)
-    VALUES (?,?,?,?,?,?,?,?)`)
-    .run(f.po_number, f.store_name, f.brand, f.asin, f.product_name, quantity, me.id, who);
+    INSERT INTO purchase_orders (po_number, store_name, brand, created_by, created_by_name)
+    VALUES (?,?,?,?,?)`).run(f.po_number, f.store_name, f.brand, me.id, who);
+  const addItem = db.prepare('INSERT INTO po_items (po_id, asin, product_name, quantity) VALUES (?,?,?,?)');
+  for (const i of items) addItem.run(info.lastInsertRowid, i.asin, i.product_name, i.quantity);
+
   db.prepare(`INSERT INTO po_events (po_id, status, detail, user_id, user_name) VALUES (?,?,?,?,?)`)
-    .run(info.lastInsertRowid, 'po_placed', `${quantity} units of ${f.product_name}`, me.id, who);
+    .run(info.lastInsertRowid, 'po_placed',
+         `${items.length} item(s), ${totalQty} units total`, me.id, who);
   notify('p2p', `${f.po_number}: PO placed by ${who}`);
-  res.redirect('/p2p?msg=' + encodeURIComponent(`PO ${f.po_number} placed by ${who}`));
+  res.redirect('/p2p?msg=' + encodeURIComponent(`PO ${f.po_number} placed by ${who} - ${items.length} item(s)`));
 });
 
 // Advance one step along the pipeline. Every transition needs a photo; the
