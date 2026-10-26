@@ -403,12 +403,18 @@ dialog button[disabled] { opacity:.45; cursor:not-allowed; filter:none; box-shad
 .pw-rules li.met::before { content:"✓"; color:#10b981; font-weight:700; }
 
 /* ---- P2P line items ----------------------------------------------------- */
-/* One line per item in each of the ASIN / Product / Qty cells. A fixed line
-   height and nowrap keep the three columns level with each other. */
-.item-col { vertical-align:top; }
-.item-line { font-size:12px; line-height:20px; height:20px; white-space:nowrap; }
-.item-col strong { font-variant-numeric:tabular-nums; }
-.item-qty { text-align:right; font-variant-numeric:tabular-nums; }
+/* Each line item is its own table row; the PO-level cells span them. Real rows
+   mean a wrapped product name grows its row and the ASIN beside it stays put. */
+.po-table tr:nth-child(even) td { background:transparent; }   /* zebra is per PO, not per row */
+.po-table tr:hover td { background:transparent; }
+.po-table .po-alt td { background:#f7faff; }
+.po-table .po-head td { border-top:1px solid var(--border); }
+.po-table tr:nth-child(2) td { border-top:none; }
+.po-table .po-item-row td { border-bottom:none; }
+.po-table td { vertical-align:top; }
+.item-asin { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.item-name { white-space:normal; min-width:150px; max-width:260px; line-height:1.45; }
+.item-qty  { white-space:nowrap; text-align:right; font-variant-numeric:tabular-nums; }
 .po-products-heading { margin:20px 0 10px; font-size:12px; font-weight:700;
   letter-spacing:.4px; text-transform:uppercase; color:var(--navy); }
 .po-product-row { display:grid; grid-template-columns:1.1fr 1.6fr .7fr auto; gap:8px;

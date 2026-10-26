@@ -32,43 +32,38 @@
     <% } %>
 
     <div class="table-wrap">
-      <table>
+      <table class="po-table">
         <tr>
           <th>PO #</th><th>Store</th><th>Brand</th><th>ASIN</th><th>Product</th><th>Qty</th>
           <th>Status</th><th>Tracking</th><th>History</th><th>Created</th><th>Updated</th><th>Action</th>
         </tr>
-        <% pos.forEach(po => { %>
-        <tr>
-          <td><strong><%= po.po_number %></strong></td>
-          <td><%= po.store_name %></td>
-          <td><%= po.brand %></td>
-          <% const poItems = itemsByPo[po.id] || []; %>
-          <td class="item-col">
-            <% poItems.forEach(it => { %><div class="item-line"><strong><%= it.asin %></strong></div><% }) %>
-            <% if (!poItems.length) { %><span class="hint">-</span><% } %>
-          </td>
-          <td class="item-col">
-            <% poItems.forEach(it => { %><div class="item-line"><%= it.product_name %></div><% }) %>
-            <% if (!poItems.length) { %><span class="hint">No items</span><% } %>
-          </td>
-          <td class="item-col item-qty">
-            <% poItems.forEach(it => { %><div class="item-line"><%= it.quantity %></div><% }) %>
-            <% if (!poItems.length) { %><span class="hint">-</span><% } %>
-          </td>
-          <td>
+        <% pos.forEach((po, poIndex) => { %>
+        <%# One table row per line item; the PO-level cells span them, so a long
+            product name wraps without pushing its ASIN and quantity out of line. -%>
+        <% const poItems = itemsByPo[po.id] || []; %>
+        <% const span = Math.max(1, poItems.length); %>
+        <% const zebra = poIndex % 2 ? ' po-alt' : ''; %>
+        <tr class="po-head<%= zebra %>">
+          <td rowspan="<%= span %>"><strong><%= po.po_number %></strong></td>
+          <td rowspan="<%= span %>"><%= po.store_name %></td>
+          <td rowspan="<%= span %>"><%= po.brand %></td>
+          <td class="item-asin"><% if (poItems[0]) { %><strong><%= poItems[0].asin %></strong><% } else { %><span class="hint">-</span><% } %></td>
+          <td class="item-name"><%= poItems[0] ? poItems[0].product_name : 'No items' %></td>
+          <td class="item-qty"><%= poItems[0] ? poItems[0].quantity : '-' %></td>
+          <td rowspan="<%= span %>">
             <span class="badge <%= po.status %>"><%= poLabels[po.status] %></span>
             <div class="by-line">by <%= (eventsByPo[po.id] || []).slice(-1)[0] ? eventsByPo[po.id].slice(-1)[0].user_name : po.created_by_name %></div>
             <% if (po.pallets_sent > 0) { %>
               <div class="by-line"><%= po.pallets_sent %> of <%= po.pallets %> pallet(s) sent</div>
             <% } %>
           </td>
-          <td>
+          <td rowspan="<%= span %>">
             <% if (po.tracking_id) { %>
               <%= po.carrier %><br><%= po.tracking_id %><br>
               <small class="hint"><%= po.pallets %> pallet<%= po.pallets === 1 ? '' : 's' %></small>
             <% } else { %>-<% } %>
           </td>
-          <td>
+          <td rowspan="<%= span %>">
             <details>
               <summary><%= (eventsByPo[po.id] || []).length %> update<%= (eventsByPo[po.id] || []).length === 1 ? '' : 's' %></summary>
               <div class="po-history">
@@ -87,9 +82,9 @@
               </div>
             </details>
           </td>
-          <td class="ts-cell"><%- include('partials/ts', { value: po.created_at }) %></td>
-          <td class="ts-cell"><%- include('partials/ts', { value: po.updated_at || po.created_at }) %></td>
-          <td>
+          <td rowspan="<%= span %>" class="ts-cell"><%- include('partials/ts', { value: po.created_at }) %></td>
+          <td rowspan="<%= span %>" class="ts-cell"><%- include('partials/ts', { value: po.updated_at || po.created_at }) %></td>
+          <td rowspan="<%= span %>">
             <% const next = poNext[po.status]; %>
             <% if (next) { %>
               <form method="post" action="/p2p/pos/<%= po.id %>/advance"
@@ -121,6 +116,13 @@
             <% } %>
           </td>
         </tr>
+        <% poItems.slice(1).forEach(it => { %>
+        <tr class="po-item-row<%= zebra %>">
+          <td class="item-asin"><strong><%= it.asin %></strong></td>
+          <td class="item-name"><%= it.product_name %></td>
+          <td class="item-qty"><%= it.quantity %></td>
+        </tr>
+        <% }) %>
         <% }) %>
         <% if (pos.length === 0) { %>
           <tr><td colspan="12"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
