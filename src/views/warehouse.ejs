@@ -41,6 +41,7 @@
                 <strong><%= it.asin %></strong> &times; <%= it.quantity %>
                 <%= it.polybag_type ? ' - ' + it.polybag_type.toLowerCase() : '' %>
                 <% if (it.fnsku_file) { %> - <a href="/fnsku/<%= it.id %>.pdf">FNSKU</a>
+                <% } else if (it.fnsku_note) { %> - <span class="badge status"><%= it.fnsku_note %></span>
                 <% } else { %> - <span class="badge unpaid">FNSKU missing</span><% } %>
                 <% if (it.ship_info) { %> - <em>info: <%= it.ship_info %></em><% } %>
                 <% (labelsByItem[it.id] || []).forEach((l, i) => { %>

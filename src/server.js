@@ -789,7 +789,7 @@ app.get('/clients', (req, res, next) => {
   const f = searchFilter(q);
   const orders = db.prepare(`
     SELECT o.*,
-      (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.fnsku_file IS NULL) AS missing_labels,
+      (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.fnsku_file IS NULL AND (i.fnsku_note IS NULL OR i.fnsku_note = '')) AS missing_labels,
       (SELECT COUNT(*) FROM order_items i WHERE i.order_id = o.id AND i.ship_info IS NULL) AS missing_info,
       ${missingSlabelsSql} AS missing_slabels
     FROM orders o WHERE o.client_id=?${f.clause} ${RECENT_FIRST}`).all(me.id, ...f.params);
@@ -944,7 +944,7 @@ app.post('/clients/orders/:id/shipment', requireClient, (req, res) => {
     return res.redirect('/clients?err=' + encodeURIComponent('Shipment already received by warehouse - details are locked'));
   }
   if (order.shipment_status === 'shipped') {
-    const missing = db.prepare('SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL').get(order.id).c;
+    const missing = db.prepare("SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL AND (fnsku_note IS NULL OR fnsku_note = '')").get(order.id).c;
     if (missing === 0) {
       return res.redirect('/clients?err=' + encodeURIComponent('Shipment details are locked once shipped and all FNSKU labels are uploaded'));
     }
@@ -974,7 +974,7 @@ app.post('/clients/orders/:id/shipment', requireClient, (req, res) => {
   }
   if (status === 'shipped') {
     // open the FNSKU upload popup only if any product is still missing its label
-    const missing = db.prepare('SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL').get(order.id).c;
+    const missing = db.prepare("SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL AND (fnsku_note IS NULL OR fnsku_note = '')").get(order.id).c;
     if (missing > 0) {
       return res.redirect(`/clients?fnsku=${order.id}&msg=` + encodeURIComponent('Shipment details saved - please upload FNSKU labels (PDF) for each ASIN'));
     }
@@ -982,14 +982,36 @@ app.post('/clients/orders/:id/shipment', requireClient, (req, res) => {
   res.redirect('/clients?msg=Shipment details updated');
 });
 
-// Upload FNSKU label PDFs (one per order item)
+// Record FNSKU labels per order item. A label PDF is optional: the client may
+// instead leave a short note ("Listing in process", or their own wording).
+const FNSKU_NOTE_MAX = 32;
 app.post('/clients/orders/:id/fnsku', requireClient, (req, res) => {
   fnskuUpload.any()(req, res, err => {
     if (err) return res.redirect(`/clients?fnsku=${req.params.id}&err=` + encodeURIComponent(err.message));
     const order = db.prepare('SELECT * FROM orders WHERE id=? AND client_id=?')
       .get(req.params.id, req.session.client.id);
     if (!order) return res.redirect('/clients?err=Order not found');
-    let saved = 0;
+    let saved = 0, noted = 0;
+
+    // notes first, so an upload in the same submit wins for that ASIN
+    for (const [key, raw] of Object.entries(req.body || {})) {
+      const m = key.match(/^note_(\d+)$/);
+      if (!m) continue;
+      const choice = String(raw || '').trim();
+      const custom = String((req.body[`custom_${m[1]}`] || '')).trim();
+      const note = choice === 'custom' ? custom : choice;
+      if (note.length > FNSKU_NOTE_MAX) {
+        return res.redirect(`/clients?fnsku=${order.id}&err=` +
+          encodeURIComponent(`Note must be ${FNSKU_NOTE_MAX} characters or fewer`));
+      }
+      const item = db.prepare('SELECT * FROM order_items WHERE id=? AND order_id=?').get(m[1], order.id);
+      if (!item) continue;
+      if (note !== (item.fnsku_note || '')) {
+        db.prepare('UPDATE order_items SET fnsku_note=? WHERE id=?').run(note || null, item.id);
+        if (note) noted++;
+      }
+    }
+
     for (const file of req.files || []) {
       const m = file.fieldname.match(/^fnsku_(\d+)$/);
       if (!m) { fs.unlinkSync(file.path); continue; }
@@ -1001,15 +1023,21 @@ app.post('/clients/orders/:id/fnsku', requireClient, (req, res) => {
         .run(finalName, item.id);
       saved++;
     }
-    if (!saved) return res.redirect(`/clients?fnsku=${order.id}&err=` + encodeURIComponent('No PDF files were uploaded'));
+    if (!saved && !noted) {
+      return res.redirect(`/clients?fnsku=${order.id}&err=` +
+        encodeURIComponent('Nothing entered - attach a label PDF or choose a status for at least one ASIN'));
+    }
     touchOrder(order.id);
-    const remaining = db.prepare('SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL').get(order.id).c;
-    if (remaining === 0) notify('warehouse', `${order.invoice_no}: all FNSKU labels uploaded`);
-    emailEvent(order, 'FNSKU labels uploaded',
-      `${order.business_name} uploaded ${saved} FNSKU label(s).` +
-      (remaining ? ` ${remaining} ASIN(s) still missing labels.` : ' All ASINs now have labels.'));
+    const remaining = db.prepare("SELECT COUNT(*) c FROM order_items WHERE order_id=? AND fnsku_file IS NULL AND (fnsku_note IS NULL OR fnsku_note = '')").get(order.id).c;
+    const what = [saved ? `${saved} label PDF(s)` : null, noted ? `${noted} status note(s)` : null]
+      .filter(Boolean).join(' and ');
+    if (remaining === 0) notify('warehouse', `${order.invoice_no}: FNSKU details complete for every ASIN`);
+    emailEvent(order, 'FNSKU details recorded',
+      `${order.business_name} recorded ${what}.` +
+      (remaining ? ` ${remaining} ASIN(s) still have neither.` : ' Every ASIN now has a label or a note.'));
     res.redirect('/clients?msg=' + encodeURIComponent(
-      remaining ? `${saved} FNSKU label(s) uploaded - ${remaining} ASIN(s) still missing labels` : 'All FNSKU labels uploaded'));
+      remaining ? `${what} saved - ${remaining} ASIN(s) still have neither`
+                : `${what} saved - every ASIN now has a label or a note`));
   });
 });
 

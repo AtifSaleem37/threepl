@@ -80,6 +80,7 @@ CREATE TABLE IF NOT EXISTS order_items (
   fnsku_file TEXT,                          -- stored PDF filename, null until uploaded
   fnsku_uploaded_at TEXT,
   ship_info TEXT,                           -- shipment info entered by warehouse after prep done
+  fnsku_note TEXT,                          -- 'Listing in process' or a short free-text note instead of a PDF
   shipping_label_file TEXT,                 -- client-uploaded shipping label PDF
   shipping_label_uploaded_at TEXT
 );
@@ -229,6 +230,7 @@ if (!hasCol('orders', 'brand_name')) db.exec('ALTER TABLE orders ADD COLUMN bran
 if (!hasCol('orders', 'polybag_qty')) db.exec('ALTER TABLE orders ADD COLUMN polybag_qty INTEGER NOT NULL DEFAULT 0');
 if (!hasCol('order_items', 'polybag_type')) db.exec('ALTER TABLE order_items ADD COLUMN polybag_type TEXT');
 if (!hasCol('order_items', 'ship_info')) db.exec('ALTER TABLE order_items ADD COLUMN ship_info TEXT');
+if (!hasCol('order_items', 'fnsku_note')) db.exec('ALTER TABLE order_items ADD COLUMN fnsku_note TEXT');
 if (!hasCol('order_items', 'shipping_label_file')) db.exec('ALTER TABLE order_items ADD COLUMN shipping_label_file TEXT');
 if (!hasCol('order_items', 'shipping_label_uploaded_at')) db.exec('ALTER TABLE order_items ADD COLUMN shipping_label_uploaded_at TEXT');
 // proof-of-payment screenshot the client attaches when marking payment sent

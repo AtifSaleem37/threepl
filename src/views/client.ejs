@@ -167,31 +167,60 @@
   <% if (fnskuOrder) { %>
   <dialog id="fnskuModal">
     <h3>FNSKU labels for <%= fnskuOrder.invoice_no %></h3>
-    <p><small class="hint">Upload one FNSKU label file per ASIN. Only PDF files are accepted.</small></p>
+    <p><small class="hint">A label PDF is optional. For any ASIN without one, pick a status instead -
+      <strong>Listing in process</strong>, or <strong>Other</strong> to write your own (32 characters max).</small></p>
     <form method="post" action="/clients/orders/<%= fnskuOrder.id %>/fnsku" enctype="multipart/form-data">
       <table>
-        <tr><th>ASIN</th><th>Qty</th><th>Status</th><th>Label PDF</th></tr>
+        <tr><th>ASIN</th><th>Qty</th><th>Current</th><th>Label PDF (optional)</th><th>Or status</th></tr>
         <% fnskuItems.forEach(it => { %>
+        <% const preset = ['Listing in process']; %>
+        <% const note = it.fnsku_note || ''; %>
+        <% const isCustom = note && !preset.includes(note); %>
         <tr>
           <td><%= it.asin %></td>
           <td><%= it.quantity %></td>
           <td>
             <% if (it.fnsku_file) { %>
-              <a href="/fnsku/<%= it.id %>.pdf">Uploaded</a>
+              <a href="/fnsku/<%= it.id %>.pdf">Label</a>
+            <% } else if (note) { %>
+              <span class="badge status"><%= note %></span>
             <% } else { %>
-              <span class="badge unpaid">Missing</span>
+              <span class="badge unpaid">None</span>
             <% } %>
           </td>
           <td><input type="file" name="fnsku_<%= it.id %>" accept="application/pdf,.pdf"></td>
+          <td>
+            <select name="note_<%= it.id %>" class="fnsku-note" data-item="<%= it.id %>">
+              <option value="" <%= note ? '' : 'selected' %>>- none -</option>
+              <% preset.forEach(opt => { %>
+                <option value="<%= opt %>" <%= note === opt ? 'selected' : '' %>><%= opt %></option>
+              <% }) %>
+              <option value="custom" <%= isCustom ? 'selected' : '' %>>Other...</option>
+            </select>
+            <input type="text" name="custom_<%= it.id %>" id="custom-<%= it.id %>"
+                   maxlength="32" placeholder="Your note (max 32)"
+                   value="<%= isCustom ? note : '' %>" <%= isCustom ? '' : 'hidden' %>>
+          </td>
         </tr>
         <% }) %>
       </table>
       <br>
       <div class="inline-form">
-        <button type="submit">Upload labels</button>
+        <button type="submit">Save</button>
         <a href="/clients" class="dialog-close"><button type="button" class="secondary">Close</button></a>
       </div>
     </form>
+    <script>
+    // "Other..." reveals the free-text box; anything else hides and clears it.
+    document.querySelectorAll('select.fnsku-note').forEach(function (sel) {
+      var box = document.getElementById('custom-' + sel.dataset.item);
+      sel.addEventListener('change', function () {
+        var custom = sel.value === 'custom';
+        box.hidden = !custom;
+        if (custom) { box.focus(); } else { box.value = ''; }
+      });
+    });
+    </script>
   </dialog>
   <script>document.getElementById('fnskuModal').showModal();</script>
   <% } %>
