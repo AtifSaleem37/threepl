@@ -116,7 +116,9 @@ CREATE TABLE IF NOT EXISTS po_items (
   po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
   asin TEXT NOT NULL,
   product_name TEXT NOT NULL,
-  quantity INTEGER NOT NULL
+  quantity INTEGER NOT NULL,          -- ordered
+  received_qty INTEGER,               -- counted in at Received; null until then
+  sent_qty INTEGER NOT NULL DEFAULT 0 -- running total despatched to Amazon
 );
 
 -- One row per state the PO has been in, including its creation. This is the
@@ -315,6 +317,16 @@ if (hasCol('purchase_orders', 'asin')) {
     db.exec('PRAGMA foreign_keys = ON');
   }
 }
+
+// Per-ASIN counts: what actually arrived, and what has gone out so far.
+if (!hasCol('po_items', 'received_qty')) db.exec('ALTER TABLE po_items ADD COLUMN received_qty INTEGER');
+if (!hasCol('po_items', 'sent_qty')) db.exec('ALTER TABLE po_items ADD COLUMN sent_qty INTEGER NOT NULL DEFAULT 0');
+// POs already past Received predate the count, so assume the ordered quantity
+// arrived; otherwise they would read as nothing received at all.
+db.exec(`UPDATE po_items SET received_qty = quantity
+         WHERE received_qty IS NULL AND po_id IN (
+           SELECT id FROM purchase_orders
+           WHERE status IN ('received','prep','partial_sent','sent_to_amazon'))`);
 
 // Running total of pallets already despatched to Amazon, for partial sends.
 if (!hasCol('purchase_orders', 'pallets_sent')) {

@@ -1,0 +1,18 @@
+<%#
+  The three quantity cells for one line item: ordered, received, sent.
+  Received is blank until the PO is counted in; a shortfall is flagged.
+-%>
+<td class="item-qty"><%= it.quantity %></td>
+<td class="item-qty">
+  <% if (it.received_qty == null) { %><span class="hint">-</span>
+  <% } else if (it.received_qty < it.quantity) { %>
+    <span class="qty-short" title="<%= it.quantity - it.received_qty %> short of the <%= it.quantity %> ordered"><%= it.received_qty %></span>
+  <% } else { %><%= it.received_qty %><% } %>
+</td>
+<td class="item-qty">
+  <% const recvBase = it.received_qty == null ? it.quantity : it.received_qty; %>
+  <% if (!it.sent_qty) { %><span class="hint">-</span>
+  <% } else if (it.sent_qty < recvBase) { %>
+    <span class="qty-part" title="<%= recvBase - it.sent_qty %> still in the warehouse"><%= it.sent_qty %></span>
+  <% } else { %><%= it.sent_qty %><% } %>
+</td>

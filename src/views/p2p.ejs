@@ -34,7 +34,8 @@
     <div class="table-wrap">
       <table class="po-table">
         <tr>
-          <th>PO #</th><th>Store</th><th>Brand</th><th>ASIN</th><th>Product</th><th>Qty</th>
+          <th>PO #</th><th>Store</th><th>Brand</th><th>ASIN</th><th>Product</th>
+          <th>Ordered</th><th>Received</th><th>Sent</th>
           <th>Status</th><th>Tracking</th><th>History</th><th>Created</th><th>Updated</th><th>Action</th>
         </tr>
         <% pos.forEach((po, poIndex) => { %>
@@ -49,7 +50,7 @@
           <td rowspan="<%= span %>"><%= po.brand %></td>
           <td class="item-asin"><% if (poItems[0]) { %><strong><%= poItems[0].asin %></strong><% } else { %><span class="hint">-</span><% } %></td>
           <td class="item-name"><%= poItems[0] ? poItems[0].product_name : 'No items' %></td>
-          <td class="item-qty"><%= poItems[0] ? poItems[0].quantity : '-' %></td>
+          <%- poItems[0] ? include('partials/po-item-qty', { it: poItems[0] }) : '<td class="item-qty">-</td><td class="item-qty">-</td><td class="item-qty">-</td>' %>
           <td rowspan="<%= span %>">
             <span class="badge <%= po.status %>"><%= poLabels[po.status] %></span>
             <div class="by-line">by <%= (eventsByPo[po.id] || []).slice(-1)[0] ? eventsByPo[po.id].slice(-1)[0].user_name : po.created_by_name %></div>
@@ -96,8 +97,32 @@
                   <input name="pallets" type="number" min="1" step="1" inputmode="numeric"
                          pattern="\d+" placeholder="Pallets" title="Whole pallets, 1 or more" required>
                 <% } %>
+                <% if (next === 'received') { %>
+                  <label>Received qty per ASIN *</label>
+                  <% poItems.forEach(it => { %>
+                    <div class="qty-entry">
+                      <span class="qty-asin" title="<%= it.product_name %>"><%= it.asin %></span>
+                      <input name="recv[<%= it.id %>]" type="number" min="0" step="1" inputmode="numeric"
+                             max="<%= it.quantity %>" value="<%= it.quantity %>"
+                             title="Ordered <%= it.quantity %>" required>
+                      <span class="qty-of">/ <%= it.quantity %></span>
+                    </div>
+                  <% }) %>
+                <% } %>
                 <% if (next === 'sent_to_amazon') { %>
-                  <label for="sent-<%= po.id %>">Pallets to send *</label>
+                  <label>Qty to send per ASIN *</label>
+                  <% poItems.forEach(it => { %>
+                    <% const recv = it.received_qty == null ? it.quantity : it.received_qty; %>
+                    <% const left = Math.max(0, recv - (it.sent_qty || 0)); %>
+                    <div class="qty-entry">
+                      <span class="qty-asin" title="<%= it.product_name %>"><%= it.asin %></span>
+                      <input name="send[<%= it.id %>]" type="number" min="0" step="1" inputmode="numeric"
+                             max="<%= left %>" value="<%= left %>"
+                             title="<%= left %> left to send" required>
+                      <span class="qty-of">/ <%= left %></span>
+                    </div>
+                  <% }) %>
+                  <label for="sent-<%= po.id %>">Pallets going out *</label>
                   <input name="pallets_sent" id="sent-<%= po.id %>" type="number" min="1" step="1"
                          inputmode="numeric" pattern="\d+"
                          max="<%= (po.pallets || 0) - (po.pallets_sent || 0) %>"
@@ -120,12 +145,12 @@
         <tr class="po-item-row<%= zebra %>">
           <td class="item-asin"><strong><%= it.asin %></strong></td>
           <td class="item-name"><%= it.product_name %></td>
-          <td class="item-qty"><%= it.quantity %></td>
+          <%- include('partials/po-item-qty', { it }) %>
         </tr>
         <% }) %>
         <% }) %>
         <% if (pos.length === 0) { %>
-          <tr><td colspan="12"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
+          <tr><td colspan="14"><%= q ? 'No purchase orders match that search.' : 'No purchase orders yet - use + Add PO.' %></td></tr>
         <% } %>
       </table>
     </div>

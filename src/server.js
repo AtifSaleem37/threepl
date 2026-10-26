@@ -155,6 +155,15 @@ function passwordProblem(pw) {
   return null;
 }
 
+// Same strictness, but zero is allowed - nothing arriving against an ASIN, or
+// nothing going out for it this time, are both real answers.
+function wholeNumberOrZero(v) {
+  const str = String(v == null ? '' : v).trim();
+  if (!/^\d+$/.test(str)) return null;
+  const n = Number(str);
+  return Number.isSafeInteger(n) ? n : null;
+}
+
 // Strict whole-number parse for pallet counts. parseInt is unusable here: it
 // silently truncates "3.7" to 3, reads "1e3" as 1 and "5abc" as 5. Leading zeros
 // and surrounding whitespace are fine; signs, decimals and trailing text are not.
@@ -600,6 +609,7 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
 
     const po = db.prepare('SELECT * FROM purchase_orders WHERE id=?').get(req.params.id);
     if (!po) return fail('Purchase order not found');
+    const poItems = db.prepare('SELECT * FROM po_items WHERE po_id=? ORDER BY id').all(po.id);
     const next = PO_NEXT[po.status];
     if (!next) return fail(`${po.po_number} is already at the final status`);
     // Guard against a double submit landing the PO two states forward.
@@ -612,23 +622,74 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
 
     let detail = '';
     let landedStatus = next;
+
+    // Received: a count per ASIN, 0 up to the quantity ordered.
+    if (next === 'received') {
+      const counts = req.body.recv || {};
+      const parsed = [];
+      for (const it of poItems) {
+        const n = wholeNumberOrZero(counts[it.id]);
+        if (n === null) {
+          return fail(`${it.asin}: received quantity must be a whole number (0 or more)`);
+        }
+        if (n > it.quantity) {
+          return fail(`${it.asin}: cannot receive more than the ${it.quantity} ordered`);
+        }
+        parsed.push({ it, n });
+      }
+      const setRecv = db.prepare('UPDATE po_items SET received_qty=? WHERE id=?');
+      for (const { it, n } of parsed) setRecv.run(n, it.id);
+      const ordered = parsed.reduce((t, x) => t + x.it.quantity, 0);
+      const got = parsed.reduce((t, x) => t + x.n, 0);
+      const short = parsed.filter(x => x.n < x.it.quantity);
+      detail = `Received ${got} of ${ordered} units ordered` +
+        (short.length ? ` - short on ${short.map(x => `${x.it.asin} (${x.n}/${x.it.quantity})`).join(', ')}` : '');
+    }
+
     if (next === 'sent_to_amazon') {
-      const sending = wholeNumber(req.body.pallets_sent);
-      const total = po.pallets || 0;
-      const already = po.pallets_sent || 0;
-      const remaining = Math.max(0, total - already);
-      if (sending === null) {
-        return fail('Pallets sent must be a whole number greater than zero - no decimals or negatives');
+      // Per-ASIN quantities decide complete vs partial; the pallet count is
+      // kept alongside so Warehouse Status stays accurate.
+      const counts = req.body.send || {};
+      const parsed = [];
+      for (const it of poItems) {
+        const recv = it.received_qty == null ? it.quantity : it.received_qty;
+        const outstanding = Math.max(0, recv - (it.sent_qty || 0));
+        const n = wholeNumberOrZero(counts[it.id]);
+        if (n === null) {
+          return fail(`${it.asin}: quantity to send must be a whole number (0 or more)`);
+        }
+        if (n > outstanding) {
+          return fail(`${it.asin}: only ${outstanding} unit(s) left to send`);
+        }
+        parsed.push({ it, n, recv, outstanding });
       }
-      if (sending > remaining) {
-        return fail(`${po.po_number} has only ${remaining} pallet(s) left to send`);
+      const movingNow = parsed.reduce((t, x) => t + x.n, 0);
+      if (movingNow < 1) return fail('Enter a quantity to send for at least one ASIN');
+
+      const palletsOut = wholeNumber(req.body.pallets_sent);
+      const palletTotal = po.pallets || 0;
+      const palletsLeft = Math.max(0, palletTotal - (po.pallets_sent || 0));
+      if (palletsOut === null) {
+        return fail('Pallets going out must be a whole number greater than zero - no decimals or negatives');
       }
-      const nowSent = already + sending;
-      // Short of the received count means the PO stays open for a further send.
-      landedStatus = nowSent >= total ? 'sent_to_amazon' : 'partial_sent';
-      db.prepare('UPDATE purchase_orders SET pallets_sent=? WHERE id=?').run(nowSent, po.id);
-      detail = `${sending} pallet(s) sent - ${nowSent} of ${total} total` +
-        (landedStatus === 'partial_sent' ? ` (${total - nowSent} still in the warehouse)` : '');
+      if (palletsOut > palletsLeft) {
+        return fail(`${po.po_number} has only ${palletsLeft} pallet(s) left to send`);
+      }
+
+      const setSent = db.prepare('UPDATE po_items SET sent_qty=? WHERE id=?');
+      for (const x of parsed) setSent.run((x.it.sent_qty || 0) + x.n, x.it.id);
+
+      const stillOut = parsed.reduce((t, x) => t + (x.outstanding - x.n), 0);
+      landedStatus = stillOut === 0 ? 'sent_to_amazon' : 'partial_sent';
+      // Once every unit has gone, any pallets left on the books went with it.
+      const palletsNow = landedStatus === 'sent_to_amazon'
+        ? palletTotal
+        : (po.pallets_sent || 0) + palletsOut;
+      db.prepare('UPDATE purchase_orders SET pallets_sent=? WHERE id=?').run(palletsNow, po.id);
+
+      const moved = parsed.filter(x => x.n > 0).map(x => `${x.it.asin} ${x.n}`).join(', ');
+      detail = `Sent ${movingNow} unit(s) on ${palletsOut} pallet(s) - ${moved}` +
+        (stillOut > 0 ? ` (${stillOut} unit(s) still in the warehouse)` : '');
     }
     if (next === 'shipped') {
       const carrier = (req.body.carrier || '').trim();
