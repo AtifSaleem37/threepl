@@ -128,6 +128,7 @@ CREATE TABLE IF NOT EXISTS po_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   po_id INTEGER NOT NULL REFERENCES purchase_orders(id) ON DELETE CASCADE,
   status TEXT NOT NULL,
+  qty INTEGER,                              -- units moved by this event, for date reporting
   photo TEXT,
   detail TEXT,
   user_id INTEGER REFERENCES users(id),
@@ -318,6 +319,24 @@ if (hasCol('purchase_orders', 'asin')) {
     db.exec('PRAGMA legacy_alter_table = 0');
     db.exec('PRAGMA foreign_keys = ON');
   }
+}
+
+// Units moved by each event, so received/sent can be reported over a date range.
+if (!hasCol('po_events', 'qty')) {
+  db.exec('ALTER TABLE po_events ADD COLUMN qty INTEGER');
+  // Backfill what can be attributed unambiguously: a PO's receipt total, and a
+  // despatch total where the PO has only one despatch event. POs despatched in
+  // several goes predate the per-event figure and stay null rather than guessed.
+  db.exec(`UPDATE po_events SET qty = (
+             SELECT COALESCE(SUM(COALESCE(i.received_qty, i.quantity)), 0)
+             FROM po_items i WHERE i.po_id = po_events.po_id)
+           WHERE status = 'received' AND qty IS NULL`);
+  db.exec(`UPDATE po_events SET qty = (
+             SELECT COALESCE(SUM(i.sent_qty), 0) FROM po_items i WHERE i.po_id = po_events.po_id)
+           WHERE status IN ('partial_sent','sent_to_amazon') AND qty IS NULL
+             AND (SELECT COUNT(*) FROM po_events e2
+                  WHERE e2.po_id = po_events.po_id
+                    AND e2.status IN ('partial_sent','sent_to_amazon')) = 1`);
 }
 
 // Per-ASIN counts: what actually arrived, and what has gone out so far.

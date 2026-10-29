@@ -110,6 +110,32 @@ const RECENT_FIRST = 'ORDER BY COALESCE(o.updated_at, o.created_at) DESC, o.id D
 // (labels, shipment info); direct UPDATEs on orders set updated_at inline.
 const touchOrder = id => db.prepare("UPDATE orders SET updated_at=datetime('now') WHERE id=?").run(id);
 
+// Units received and despatched within a date range, read off po_events.qty.
+// Dates are the stored UTC day; the form defaults to the last 30 days.
+function poMovements(fromRaw, toRaw) {
+  const valid = d => /^\d{4}-\d{2}-\d{2}$/.test(String(d || ''));
+  const def = db.prepare("SELECT date('now','-29 days') AS f, date('now') AS t").get();
+  let from = valid(fromRaw) ? fromRaw : def.f;
+  let to = valid(toRaw) ? toRaw : def.t;
+  if (from > to) [from, to] = [to, from];          // tolerate a reversed range
+
+  const tally = statuses => db.prepare(`
+    SELECT COALESCE(SUM(qty), 0) AS units,
+           COUNT(*) AS events,
+           COUNT(DISTINCT po_id) AS pos,
+           SUM(CASE WHEN qty IS NULL THEN 1 ELSE 0 END) AS unknown
+    FROM po_events
+    WHERE status IN (${statuses.map(() => '?').join(',')})
+      AND date(created_at) BETWEEN ? AND ?`).get(...statuses, from, to);
+
+  return {
+    from, to,
+    isDefault: from === def.f && to === def.t,
+    received: tally(['received']),
+    sent: tally(['partial_sent', 'sent_to_amazon'])
+  };
+}
+
 // Order-lifecycle actions are emailed to the operations mailbox; 'tracking' and
 // 'payment' copy their own recipients too (see mailer.js). Fire-and-forget by
 // design: a mail failure is logged and never blocks the action that caused it.
@@ -189,6 +215,17 @@ function warehouseStatus() {
     SELECT COALESCE(SUM(COALESCE(pallets,0)), 0) AS n, COUNT(*) AS pos
     FROM purchase_orders WHERE status='shipped'`).get();
 
+  // Units are counted at runtime with no capacity - we only know how many are
+  // on the floor, not how many could be. A partially sent PO counts its remainder.
+  const unitsOnFloor = db.prepare(`
+    SELECT COALESCE(SUM(MAX(COALESCE(i.received_qty, i.quantity) - i.sent_qty, 0)), 0) AS n
+    FROM po_items i JOIN purchase_orders p ON p.id = i.po_id
+    WHERE p.status IN ('received','prep','partial_sent')`).get().n;
+  const unitsInTransit = db.prepare(`
+    SELECT COALESCE(SUM(i.quantity), 0) AS n
+    FROM po_items i JOIN purchase_orders p ON p.id = i.po_id
+    WHERE p.status = 'shipped'`).get().n;
+
   const inWarehouse = onFloor.n, inTransit = transit.n;
   const committed = inWarehouse + inTransit;
   const free = Math.max(0, WAREHOUSE_CAPACITY - committed);
@@ -215,6 +252,7 @@ function warehouseStatus() {
 
   return {
     capacity: WAREHOUSE_CAPACITY, inWarehouse, inTransit, committed, free, total,
+    unitsOnFloor, unitsInTransit,
     posOnFloor: onFloor.pos, posInTransit: transit.pos,
     segments, arcs, radius: R, circumference: C,
     over: Math.max(0, inWarehouse - WAREHOUSE_CAPACITY),
@@ -533,6 +571,7 @@ app.get('/p2p', (req, res, next) => {
     user: req.session.p2p, pos, eventsByPo, itemsByPo, q,
     poLabels: PO_LABELS, poNext: PO_NEXT, poPhotoRequired: PO_PHOTO_REQUIRED,
     wh: warehouseStatus(),
+    mv: poMovements(req.query.from, req.query.to),
     notifs: getNotifs('p2p'),
     tab: req.query.tab === 'warehouse' ? 'warehouse' : 'orders',
     openNew: req.query.new === '1',
@@ -622,6 +661,7 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
 
     let detail = '';
     let landedStatus = next;
+    let movedUnits = null;      // units this event moved, for the date report
 
     // Received: a count per ASIN, 0 up to the quantity ordered.
     if (next === 'received') {
@@ -641,6 +681,7 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
       for (const { it, n } of parsed) setRecv.run(n, it.id);
       const ordered = parsed.reduce((t, x) => t + x.it.quantity, 0);
       const got = parsed.reduce((t, x) => t + x.n, 0);
+      movedUnits = got;
       const short = parsed.filter(x => x.n < x.it.quantity);
       detail = `Received ${got} of ${ordered} units ordered` +
         (short.length ? ` - short on ${short.map(x => `${x.it.asin} (${x.n}/${x.it.quantity})`).join(', ')}` : '');
@@ -687,6 +728,7 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
         : (po.pallets_sent || 0) + palletsOut;
       db.prepare('UPDATE purchase_orders SET pallets_sent=? WHERE id=?').run(palletsNow, po.id);
 
+      movedUnits = movingNow;
       const moved = parsed.filter(x => x.n > 0).map(x => `${x.it.asin} ${x.n}`).join(', ');
       detail = `Sent ${movingNow} unit(s) on ${palletsOut} pallet(s) - ${moved}` +
         (stillOut > 0 ? ` (${stillOut} unit(s) still in the warehouse)` : '');
@@ -716,8 +758,8 @@ app.post('/p2p/pos/:id/advance', requireP2p, (req, res) => {
 
     db.prepare("UPDATE purchase_orders SET status=?, updated_at=datetime('now') WHERE id=?")
       .run(landedStatus, po.id);
-    db.prepare('INSERT INTO po_events (po_id, status, photo, detail, user_id, user_name) VALUES (?,?,?,?,?,?)')
-      .run(po.id, landedStatus, photoName, detail || null, me.id, who);
+    db.prepare('INSERT INTO po_events (po_id, status, qty, photo, detail, user_id, user_name) VALUES (?,?,?,?,?,?,?)')
+      .run(po.id, landedStatus, movedUnits, photoName, detail || null, me.id, who);
     notify('p2p', `${po.po_number}: ${PO_LABELS[landedStatus]} by ${who}`);
     res.redirect('/p2p?msg=' + encodeURIComponent(`${po.po_number} - ${PO_LABELS[landedStatus]} by ${who}`));
   });

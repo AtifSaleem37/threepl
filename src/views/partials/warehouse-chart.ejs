@@ -66,6 +66,18 @@
     </div>
   </div>
 
+  <div class="unit-strip">
+    <div class="unit-hero">
+      <span class="unit-value"><%= wh.unitsOnFloor.toLocaleString('en-US') %></span>
+      <span class="unit-label">Units in warehouse</span>
+      <span class="unit-note">across every ASIN, counted live</span>
+    </div>
+    <div class="unit-side">
+      <span class="unit-value sm"><%= wh.unitsInTransit.toLocaleString('en-US') %></span>
+      <span class="unit-label">Units in transit</span>
+    </div>
+  </div>
+
   <details class="wh-table">
     <summary>View as table</summary>
     <div class="table-wrap">
@@ -82,6 +94,49 @@
       </table>
     </div>
   </details>
+
+  <div class="movements">
+    <div class="card-head">
+      <h2>Received &amp; Sent to Amazon</h2>
+      <form method="get" action="/p2p" class="date-filter">
+        <input type="hidden" name="tab" value="warehouse">
+        <label for="mvFrom">From</label>
+        <input type="date" id="mvFrom" name="from" value="<%= mv.from %>" max="<%= mv.to %>">
+        <label for="mvTo">To</label>
+        <input type="date" id="mvTo" name="to" value="<%= mv.to %>" min="<%= mv.from %>">
+        <button type="submit" class="small">Apply</button>
+        <% if (!mv.isDefault) { %>
+          <a class="search-clear" href="/p2p?tab=warehouse">Last 30 days</a>
+        <% } %>
+      </form>
+    </div>
+
+    <div class="wh-stats">
+      <div class="stat">
+        <span class="stat-value"><%= mv.received.units.toLocaleString('en-US') %></span>
+        <span class="stat-label">Units received</span>
+        <span class="stat-sub"><%= mv.received.events %> receipt<%= mv.received.events === 1 ? '' : 's' %>
+          &middot; <%= mv.received.pos %> PO<%= mv.received.pos === 1 ? '' : 's' %></span>
+      </div>
+      <div class="stat">
+        <span class="stat-value"><%= mv.sent.units.toLocaleString('en-US') %></span>
+        <span class="stat-label">Units sent to Amazon</span>
+        <span class="stat-sub"><%= mv.sent.events %> despatch<%= mv.sent.events === 1 ? '' : 'es' %>
+          &middot; <%= mv.sent.pos %> PO<%= mv.sent.pos === 1 ? '' : 's' %></span>
+      </div>
+      <div class="stat">
+        <span class="stat-value"><%= (mv.received.units - mv.sent.units).toLocaleString('en-US') %></span>
+        <span class="stat-label">Net change</span>
+        <span class="stat-sub">received minus sent</span>
+      </div>
+    </div>
+    <% const unknown = (mv.received.unknown || 0) + (mv.sent.unknown || 0); %>
+    <% if (unknown > 0) { %>
+      <p><small class="hint"><%= unknown %> movement<%= unknown === 1 ? '' : 's' %> in this range
+        predate per-event quantities and are not counted in the totals above.</small></p>
+    <% } %>
+    <p><small class="hint">Dates follow the stored UTC day, so a late-evening movement may fall on the next date.</small></p>
+  </div>
 
   <p><small class="hint"><strong>In warehouse</strong> counts pallets received but not yet sent to Amazon,
     so a partially sent PO still occupies the remainder. <strong>In transit</strong> counts pallets on POs
